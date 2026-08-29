@@ -1,0 +1,60 @@
+{
+  "name": "agent-session-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browse, search, filter, export, and resume local coding-agent sessions.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gautamgpt1/agent-session-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gautamgpt1/agent-session-browser/issues"
+  },
+  "homepage": "https://github.com/gautamgpt1/agent-session-browser#readme",
+  "keywords": [
+    "coding-agent",
+    "session-history",
+    "codex",
+    "claude-code",
+    "gemini-cli",
+    "jsonl-viewer"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server/index.ts",
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -p tsconfig.server.json && vite build",
+    "start": "node scripts/start-production.mjs",
+    "tui": "tsx src/tui/index.ts",
+    "tui:built": "node dist/server/tui/index.js",
+    "test": "vitest run --exclude tests/e2e/**",
+    "test:production": "node scripts/production-smoke.mjs",
+    "test:e2e": "playwright test",
+    "check": "npm run build && npm run test && npm run test:production && npm run test:e2e"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "express": "^5.2.1",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.0.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.0.15"
+  }
+}

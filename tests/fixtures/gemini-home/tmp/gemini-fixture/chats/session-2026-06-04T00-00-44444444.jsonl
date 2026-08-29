@@ -1,0 +1,4 @@
+{"sessionId":"44444444-4444-4444-8444-444444444444","projectHash":"fixture-hash","startTime":"2026-06-04T00:00:00.000Z","lastUpdated":"2026-06-04T00:00:03.000Z","summary":"Gemini fixture inspection","kind":"main"}
+{"id":"gemini-user-1","timestamp":"2026-06-04T00:00:00.000Z","type":"user","content":[{"text":"Inspect the Gemini fixture project"}]}
+{"id":"gemini-assistant-1","timestamp":"2026-06-04T00:00:01.000Z","type":"gemini","content":"I will inspect the project.","thoughts":[{"subject":"Inspection","description":"Read the project files first."}],"toolCalls":[{"id":"gemini-call-1","name":"run_shell_command","displayName":"Shell","args":{"command":"Get-ChildItem"},"status":"success","resultDisplay":"Gemini fixture listing"}]}
+{"id":"gemini-assistant-2","timestamp":"2026-06-04T00:00:03.000Z","type":"gemini","content":"The Gemini fixture inspection is complete.","thoughts":[],"toolCalls":[]}

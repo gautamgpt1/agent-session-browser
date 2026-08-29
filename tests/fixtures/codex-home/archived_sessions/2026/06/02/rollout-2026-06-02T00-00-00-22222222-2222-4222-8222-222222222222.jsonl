@@ -1,0 +1,6 @@
+{"timestamp":"2026-06-02T00:00:00.000Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","timestamp":"2026-06-02T00:00:00.000Z","cwd":"C:\\Projects\\archive","originator":"codex-tui","cli_version":"0.141.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-06-02T00:00:01.000Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"C:\\Projects\\archive","current_date":"2026-06-02"}}
+{"timestamp":"2026-06-02T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","turn_id":"turn-1","message":"Archived Codex fixture prompt"}}
+{"timestamp":"2026-06-02T00:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"apply_patch","call_id":"call-patch","arguments":"{\"patch\":\"*** Begin Patch\"}"}}
+{"timestamp":"2026-06-02T00:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-patch","output":"Patch applied"}}
+{"timestamp":"2026-06-02T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Archived assistant response"}]}}
