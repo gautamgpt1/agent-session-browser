@@ -1,4 +1,4 @@
-const TEXT_LIMIT = 120_000;
+const TEXT_LIMIT = 20_000;
 
 export function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -12,7 +12,7 @@ export function truncateText(value: string | null | undefined, limit = TEXT_LIMI
 
 export function toDisplayText(value: unknown): string | null {
   if (value == null) return null;
-  if (typeof value === "string") return truncateText(value);
+  if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) {
     const parts = value
@@ -31,7 +31,7 @@ export function toDisplayText(value: unknown): string | null {
         return toDisplayText(entry);
       })
       .filter(Boolean);
-    return truncateText(parts.join("\n"));
+    return parts.join("\n");
   }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
@@ -40,20 +40,18 @@ export function toDisplayText(value: unknown): string | null {
       toDisplayText(record.message) ||
       toDisplayText(record.output) ||
       toDisplayText(record.content) ||
-      truncateText(JSON.stringify(value, null, 2))
+      JSON.stringify(value, null, 2)
     );
   }
   return null;
 }
 
-export function normalizeFtsQuery(q: string | null | undefined): string | null {
-  if (!q) return null;
-  const terms = q
+export function normalizeSearchTerms(q: string | null | undefined): string[] {
+  if (!q) return [];
+  return q
     .trim()
     .split(/\s+/)
     .map((term) => term.replace(/"/g, ""))
     .filter(Boolean)
     .slice(0, 8);
-  if (terms.length === 0) return null;
-  return terms.map((term) => `"${term}"`).join(" AND ");
 }

@@ -1,21 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
 import type { ArchiveState, ConversationItem, ToolCall } from "../shared/types.js";
+import { BoundedItemCollector, BoundedMap, type BoundedParseOptions, HeadTailBuffer, SearchTextCollector } from "./bounded-parse.js";
 import type { ParsedSession, ParsedTurn } from "./parser.js";
+import { iterateSourceLines } from "./source-lines.js";
 import { compactWhitespace, toDisplayText, truncateText } from "./text.js";
 
 type RecordValue = Record<string, unknown>;
 type ClaudeMessageOutcome = { stopReasons: Set<string>; hasToolUse: boolean };
 
-export async function parseClaudeJsonlFile(sourcePath: string, archiveState: ArchiveState): Promise<ParsedSession> {
+export async function parseClaudeJsonlFile(sourcePath: string, archiveState: ArchiveState, options: BoundedParseOptions = {}): Promise<ParsedSession> {
   const stat = await fs.promises.stat(sourcePath);
   const messageOutcomes = await scanClaudeMessageOutcomes(sourcePath);
-  const items: Omit<ConversationItem, "id">[] = [];
-  const tools: Omit<ToolCall, "id" | "cwd" | "archiveState">[] = [];
-  const toolsByCallId = new Map<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>();
-  const turns = new Map<string, ParsedTurn>();
-  const searchChunks: string[] = [];
+  const collectionLimit = options.retainItems === false ? 0 : undefined;
+  const itemCollector = new BoundedItemCollector(options);
+  const toolCollector = new HeadTailBuffer<Omit<ToolCall, "id" | "cwd" | "archiveState">>(collectionLimit);
+  const toolsByCallId = new BoundedMap<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>(options.retainItems === false ? 10_000 : undefined);
+  const turnCollector = new HeadTailBuffer<ParsedTurn>(collectionLimit);
+  const searchText = new SearchTextCollector();
   const parseErrors: string[] = [];
   let lineCount = 0;
   let sequence = 0;
@@ -33,22 +35,41 @@ export async function parseClaudeJsonlFile(sourcePath: string, archiveState: Arc
   let turnNumber = 0;
 
   const addItem = (input: Omit<ConversationItem, "id" | "sessionId" | "sequence">) => {
-    items.push({ ...input, sessionId: "", sequence: sequence++ });
-    for (const value of [input.role, input.text, input.summary, input.toolName, input.payloadType]) {
-      if (value) searchChunks.push(value);
-    }
+    itemCollector.add({ ...input, sessionId: "", sequence: sequence++ });
+    searchText.add([input.role, input.text, input.summary, input.toolName, input.payloadType]);
   };
 
-  const stream = fs.createReadStream(sourcePath, { encoding: "utf8" });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  for await (const line of rl) {
-    lineCount += 1;
+  for await (const sourceLine of iterateSourceLines(sourcePath)) {
+    const { line, lineNo } = sourceLine;
+    lineCount = lineNo;
     if (!line.trim()) continue;
     let record: RecordValue;
     try {
       record = JSON.parse(line) as RecordValue;
     } catch (error) {
-      parseErrors.push(`Line ${lineCount}: ${(error as Error).message}`);
+      const message = `Line ${lineCount}: ${(error as Error).message}`;
+      if (parseErrors.length < 10) parseErrors.push(message);
+      addItem({
+        turnId: currentTurnId,
+        timestamp: null,
+        envelopeType: "parse_error",
+        payloadType: "error",
+        role: null,
+        toolName: null,
+        callId: null,
+        phase: null,
+        nativeId: null,
+        parentId: null,
+        requestId: null,
+        model: null,
+        stopReason: null,
+        usageJson: null,
+        providerMetadataJson: null,
+        summary: message,
+        text: null,
+        rawJson: undefined,
+        lineNo
+      });
       continue;
     }
 
@@ -87,7 +108,7 @@ export async function parseClaudeJsonlFile(sourcePath: string, archiveState: Arc
     if (recordType === "user" && !record.isMeta && !containsOnlyToolResults(content)) {
       turnNumber += 1;
       currentTurnId = stringOrNull(record.promptId) || stringOrNull(record.uuid) || `turn-${turnNumber}`;
-      turns.set(currentTurnId, {
+      turnCollector.add({
         turnId: currentTurnId,
         startedAt: timestamp,
         cwd,
@@ -112,34 +133,34 @@ export async function parseClaudeJsonlFile(sourcePath: string, archiveState: Arc
           fallbackAssistantMessage = compactWhitespace(text).slice(0, 500);
           if (assistantPhase === "final_answer") lastAssistantMessage = fallbackAssistantMessage;
         }
-        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: messagePayloadType, role, toolName: null, callId: null, phase: assistantPhase, summary: null, text, rawJson: line, lineNo: lineCount });
+        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: messagePayloadType, role, toolName: null, callId: null, phase: assistantPhase, summary: null, text, rawJson: undefined, lineNo: lineCount });
         emitted = true;
       } else if (partType === "thinking") {
-        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "reasoning", role: null, toolName: null, callId: null, phase: null, summary: toDisplayText(value.thinking), text: toDisplayText(value.thinking), rawJson: line, lineNo: lineCount });
+        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "reasoning", role: null, toolName: null, callId: null, phase: null, summary: toDisplayText(value.thinking), text: toDisplayText(value.thinking), rawJson: undefined, lineNo: lineCount });
         emitted = true;
       } else if (partType === "tool_use") {
         const callId = stringOrNull(value.id);
         const toolName = stringOrNull(value.name) || "tool_use";
         const argumentsJson = stringifyMaybe(value.input);
         const tool = { sessionId: "", turnId: currentTurnId, timestamp, toolName, callId, argumentsJson, outputText: null, status: "started" };
-        tools.push(tool);
+        toolCollector.add(tool);
         if (callId) toolsByCallId.set(callId, tool);
-        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "function_call", role: null, toolName, callId, phase: "started", summary: null, text: argumentsJson, rawJson: line, lineNo: lineCount });
+        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "function_call", role: null, toolName, callId, phase: "started", summary: null, text: argumentsJson, rawJson: undefined, lineNo: lineCount });
         emitted = true;
       } else if (partType === "tool_result") {
         const callId = stringOrNull(value.tool_use_id);
-        const outputText = truncateText(toDisplayText(value.content));
+        const outputText = toDisplayText(value.content);
         const existing = callId ? toolsByCallId.get(callId) : undefined;
         if (existing) {
-          existing.outputText = outputText;
+          existing.outputText = truncateText(outputText);
           existing.status = value.is_error ? "error" : "completed";
         } else {
-          tools.push({ sessionId: "", turnId: currentTurnId, timestamp, toolName: "tool_result", callId, argumentsJson: null, outputText, status: value.is_error ? "error" : "completed" });
+          toolCollector.add({ sessionId: "", turnId: currentTurnId, timestamp, toolName: "tool_result", callId, argumentsJson: null, outputText: truncateText(outputText), status: value.is_error ? "error" : "completed" });
         }
-        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "function_call_output", role: null, toolName: existing?.toolName || null, callId, phase: value.is_error ? "error" : "completed", summary: null, text: outputText, rawJson: line, lineNo: lineCount });
+        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: "function_call_output", role: null, toolName: existing?.toolName || null, callId, phase: value.is_error ? "error" : "completed", summary: null, text: outputText, rawJson: undefined, lineNo: lineCount });
         emitted = true;
       } else {
-        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: partType, role: null, toolName: null, callId: null, phase: null, summary: null, text: toDisplayText(value), rawJson: line, lineNo: lineCount });
+        addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType: partType, role: null, toolName: null, callId: null, phase: null, summary: null, text: toDisplayText(value), rawJson: undefined, lineNo: lineCount });
         emitted = true;
       }
     }
@@ -147,13 +168,15 @@ export async function parseClaudeJsonlFile(sourcePath: string, archiveState: Arc
     if (!emitted) {
       const payloadType = stringOrNull(record.subtype) || recordType;
       const text = toDisplayText(record.message) || toDisplayText(record.attachment);
-      addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType, role: null, toolName: null, callId: null, phase: null, summary: null, text, rawJson: line, lineNo: lineCount });
+      addItem({ ...nativeFields, turnId: currentTurnId, timestamp, envelopeType: recordType, payloadType, role: null, toolName: null, callId: null, phase: null, summary: null, text, rawJson: undefined, lineNo: lineCount });
     }
   }
 
   const fallbackNativeId = extractUuid(sourcePath) || path.basename(sourcePath, ".jsonl");
   nativeId ||= fallbackNativeId;
   const id = `claude:${nativeId}${agentId ? `:${agentId}` : ""}`;
+  const items = itemCollector.values();
+  const tools = toolCollector.values();
   for (const item of items) item.sessionId = id;
   for (const tool of tools) tool.sessionId = id;
 
@@ -163,8 +186,9 @@ export async function parseClaudeJsonlFile(sourcePath: string, archiveState: Arc
     bytes: stat.size, mtimeMs: stat.mtimeMs, lineCount,
     parseStatus: parseErrors.length === 0 ? "ok" : items.length > 0 ? "partial" : "error",
     parseError: parseErrors.slice(0, 10).join("\n") || null,
-    firstUserMessage, lastAssistantMessage: lastAssistantMessage || fallbackAssistantMessage, turns: Array.from(turns.values()), items, tools,
-    searchText: truncateText(searchChunks.join("\n"), 1_000_000) || ""
+    firstUserMessage, lastAssistantMessage: lastAssistantMessage || fallbackAssistantMessage, turns: turnCollector.values(), items, tools,
+    searchText: searchText.value(),
+    deferredRecords: itemCollector.deferredCount
   };
 }
 
@@ -174,11 +198,9 @@ function stringifyMaybe(value: unknown): string | null { if (value == null) retu
 function extractUuid(value: string): string | null { return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] || null; }
 function containsOnlyToolResults(value: unknown): boolean { return Array.isArray(value) && value.length > 0 && value.every((part) => isRecord(part) && part.type === "tool_result"); }
 
-async function scanClaudeMessageOutcomes(sourcePath: string): Promise<Map<string, ClaudeMessageOutcome>> {
-  const outcomes = new Map<string, ClaudeMessageOutcome>();
-  const stream = fs.createReadStream(sourcePath, { encoding: "utf8" });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  for await (const line of rl) {
+async function scanClaudeMessageOutcomes(sourcePath: string): Promise<BoundedMap<string, ClaudeMessageOutcome>> {
+  const outcomes = new BoundedMap<string, ClaudeMessageOutcome>();
+  for await (const { line } of iterateSourceLines(sourcePath)) {
     if (!line.trim()) continue;
     let record: RecordValue;
     try { record = JSON.parse(line) as RecordValue; } catch { continue; }

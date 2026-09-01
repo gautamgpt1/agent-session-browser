@@ -1,7 +1,8 @@
 import fs from "node:fs";
-import readline from "node:readline";
 import path from "node:path";
 import type { AgentProvider, ArchiveState, ConversationItem, ParseStatus, ToolCall } from "../shared/types.js";
+import { BoundedItemCollector, BoundedMap, type BoundedParseOptions, HeadTailBuffer, SearchTextCollector } from "./bounded-parse.js";
+import { iterateSourceLines } from "./source-lines.js";
 import { compactWhitespace, toDisplayText, truncateText } from "./text.js";
 
 export interface ParsedTurn {
@@ -37,7 +38,10 @@ export interface ParsedSession {
   items: Omit<ConversationItem, "id">[];
   tools: Omit<ToolCall, "id" | "cwd" | "archiveState">[];
   searchText: string;
+  deferredRecords?: number;
 }
+
+export type CodexParseOptions = BoundedParseOptions;
 
 interface Envelope {
   item?: Record<string, unknown>;
@@ -64,13 +68,14 @@ const TOOL_OUTPUT_TYPES = new Set([
   "tool_search_output"
 ]);
 
-export async function parseCodexJsonlFile(sourcePath: string, archiveState: ArchiveState): Promise<ParsedSession> {
+export async function parseCodexJsonlFile(sourcePath: string, archiveState: ArchiveState, options: CodexParseOptions = {}): Promise<ParsedSession> {
   const stat = await fs.promises.stat(sourcePath);
-  const turns = new Map<string, ParsedTurn>();
-  const items: Omit<ConversationItem, "id">[] = [];
-  const toolsByCallId = new Map<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>();
-  const tools: Omit<ToolCall, "id" | "cwd" | "archiveState">[] = [];
-  const searchChunks: string[] = [];
+  const collectionLimit = options.retainItems === false ? 0 : undefined;
+  const turnCollector = new HeadTailBuffer<ParsedTurn>(collectionLimit);
+  const itemCollector = new BoundedItemCollector(options);
+  const toolsByCallId = new BoundedMap<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>(options.retainItems === false ? 10_000 : undefined);
+  const toolCollector = new HeadTailBuffer<Omit<ToolCall, "id" | "cwd" | "archiveState">>(collectionLimit);
+  const searchText = new SearchTextCollector();
   const parseErrors: string[] = [];
 
   let lineCount = 0;
@@ -85,21 +90,44 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
   let startedAt: string | null = null;
   let lastEventAt: string | null = null;
   let currentTurnId: string | null = null;
+  let turnNumber = 0;
   let firstUserMessage: string | null = null;
   let fallbackUserMessage: string | null = null;
   let lastAssistantMessage: string | null = null;
 
-  const stream = fs.createReadStream(sourcePath, { encoding: "utf8" });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    lineCount += 1;
+  for await (const sourceLine of iterateSourceLines(sourcePath)) {
+    const { line, lineNo } = sourceLine;
+    lineCount = lineNo;
     if (!line.trim()) continue;
     let envelope: Envelope;
     try {
       envelope = JSON.parse(line) as Envelope;
     } catch (error) {
-      parseErrors.push(`Line ${lineCount}: ${(error as Error).message}`);
+      const message = `Line ${lineCount}: ${(error as Error).message}`;
+      if (parseErrors.length < 10) parseErrors.push(message);
+      itemCollector.add({
+        sessionId: "",
+        turnId: currentTurnId,
+        timestamp: null,
+        envelopeType: "parse_error",
+        payloadType: "error",
+        role: null,
+        toolName: null,
+        callId: null,
+        phase: null,
+        nativeId: null,
+        parentId: null,
+        requestId: null,
+        model: currentModel,
+        stopReason: null,
+        usageJson: null,
+        providerMetadataJson: null,
+        summary: message,
+        text: null,
+        rawJson: undefined,
+        lineNo,
+        sequence: sequence++
+      });
       continue;
     }
 
@@ -130,9 +158,10 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
     if (payloadTurnId) currentTurnId = payloadTurnId;
 
     if (envelopeType === "turn_context") {
-      const turnId = payloadTurnId || `turn-${turns.size + 1}`;
+      turnNumber += 1;
+      const turnId = payloadTurnId || `turn-${turnNumber}`;
       currentTurnId = turnId;
-      turns.set(turnId, {
+      turnCollector.add({
         turnId,
         startedAt: timestamp,
         cwd: stringOrNull(payload.cwd),
@@ -154,7 +183,6 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
     const model = stringOrNull(payload.model) || currentModel;
     const stopReason = stringOrNull(payload.stop_reason);
     const itemTurnId = payloadTurnId || currentTurnId;
-    const rawJson = line;
 
     if (role === "user" && text) {
       const normalized = compactWhitespace(text).slice(0, 500);
@@ -190,15 +218,12 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
       }),
       summary,
       text,
-      rawJson,
+      rawJson: undefined,
       lineNo: lineCount,
       sequence: sequence++
     };
-    items.push(item);
-
-    for (const chunk of [cwd, role, text, summary, toolName, payloadType].filter(Boolean)) {
-      searchChunks.push(String(chunk));
-    }
+    const storedItem = itemCollector.add(item);
+    searchText.add([cwd, storedItem.role, storedItem.text, storedItem.summary, storedItem.toolName, storedItem.payloadType]);
 
     if (payloadType && TOOL_CALL_TYPES.has(payloadType)) {
       const name = toolName || payloadType;
@@ -212,9 +237,9 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
         outputText: null,
         status: "started"
       };
-      tools.push(tool);
+      toolCollector.add(tool);
       if (callId) toolsByCallId.set(callId, tool);
-      searchChunks.push(name, tool.argumentsJson || "");
+      searchText.add([name, tool.argumentsJson]);
     }
 
     if (payloadType && TOOL_OUTPUT_TYPES.has(payloadType)) {
@@ -223,9 +248,9 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
         const tool = toolsByCallId.get(callId)!;
         tool.outputText = truncateText(outputText);
         tool.status = "completed";
-        searchChunks.push(tool.outputText || "");
+        searchText.add([tool.outputText]);
       } else {
-        tools.push({
+        toolCollector.add({
           sessionId: "",
           turnId: itemTurnId,
           timestamp,
@@ -241,6 +266,8 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
 
   const fallbackId = extractUuid(sourcePath) || path.basename(sourcePath, ".jsonl");
   const id = sessionId || fallbackId;
+  const items = itemCollector.values();
+  const tools = toolCollector.values();
   for (const item of items) item.sessionId = id;
   for (const tool of tools) tool.sessionId = id;
 
@@ -264,10 +291,11 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
     parseError: parseErrors.slice(0, 10).join("\n") || null,
     firstUserMessage: firstUserMessage || fallbackUserMessage,
     lastAssistantMessage,
-    turns: Array.from(turns.values()),
+    turns: turnCollector.values(),
     items,
     tools,
-    searchText: truncateText(searchChunks.filter(Boolean).join("\n"), 1_000_000) || ""
+    searchText: searchText.value(),
+    deferredRecords: itemCollector.deferredCount
   };
 }
 

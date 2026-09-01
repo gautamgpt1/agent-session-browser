@@ -10,7 +10,6 @@ export interface AppConfig {
   dbPath: string;
   bindHost: string;
   port: number;
-  version: string;
   isDev: boolean;
   watchSources: boolean;
 }
@@ -84,8 +83,7 @@ export function resolveAppConfig(): AppConfig {
     geminiProjectPaths: loadGeminiProjectPaths(geminiHome),
     dbPath: path.join(appDataRoot, "index.sqlite"),
     bindHost: "127.0.0.1",
-    port: parsePort(process.env.PORT || process.env.AGENT_SESSION_BROWSER_PORT),
-    version: "0.1.0",
+    port: parsePort(process.env.AGENT_SESSION_BROWSER_PORT || process.env.PORT),
     isDev: process.env.NODE_ENV !== "production",
     watchSources: process.env.AGENT_SESSION_BROWSER_DISABLE_WATCHER !== "1"
   };

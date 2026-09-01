@@ -90,10 +90,12 @@ export interface ConversationItem {
   lineNo: number;
   sequence: number;
   rawJson?: string;
+  contentPreview?: boolean;
 }
 
 export interface TurnGroup {
   turnId: string;
+  turnNumber?: number;
   startedAt: string | null;
   cwd: string | null;
   currentDate: string | null;
@@ -120,6 +122,17 @@ export interface SessionDetailResponse {
   session: SessionSummary;
   turns: TurnGroup[];
   tools: ToolCall[];
+  loadedItemCount: number;
+  pageOffset: number;
+  pageLimit: number;
+  totalMatchingItems: number;
+  totalMatchingTurns: number;
+  nextOffset: number | null;
+  sourceVersion: string;
+  categoryCounts: Record<string, number>;
+  toolCounts: Record<string, number>;
+  availableTools: string[];
+  expandableRecordCount: number;
 }
 
 export interface RawItemResponse {

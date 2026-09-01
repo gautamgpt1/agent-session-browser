@@ -1,18 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
 import type { ArchiveState, ConversationItem, ToolCall } from "../shared/types.js";
+import { BoundedItemCollector, BoundedMap, type BoundedParseOptions, HeadTailBuffer, SearchTextCollector } from "./bounded-parse.js";
 import type { ParsedSession, ParsedTurn } from "./parser.js";
+import { iterateSourceLines } from "./source-lines.js";
 import { compactWhitespace, toDisplayText } from "./text.js";
 
 type JsonObject = Record<string, any>;
 
-export async function parsePiSessionFile(sourcePath: string, archiveState: ArchiveState): Promise<ParsedSession> {
+export async function parsePiSessionFile(sourcePath: string, archiveState: ArchiveState, options: BoundedParseOptions = {}): Promise<ParsedSession> {
   const stat = await fs.promises.stat(sourcePath);
-  const items: Omit<ConversationItem, "id">[] = [];
-  const tools: Omit<ToolCall, "id" | "cwd" | "archiveState">[] = [];
-  const toolsByCallId = new Map<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>();
-  const searchChunks: string[] = [];
+  const collectionLimit = options.retainItems === false ? 0 : undefined;
+  const itemCollector = new BoundedItemCollector(options);
+  const toolCollector = new HeadTailBuffer<Omit<ToolCall, "id" | "cwd" | "archiveState">>(collectionLimit);
+  const toolsByCallId = new BoundedMap<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>(options.retainItems === false ? 10_000 : undefined);
+  const searchText = new SearchTextCollector();
   const errors: string[] = [];
   let header: JsonObject | null = null;
   let lineCount = 0;
@@ -44,23 +46,25 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
       providerMetadataJson: values.providerMetadataJson || metadataJson(entry),
       summary: values.summary || null,
       text: values.text || null,
-      rawJson: JSON.stringify(entry),
+      rawJson: undefined,
       lineNo: lineCount,
       sequence: sequence++
     };
-    items.push(item);
-    for (const value of [item.role, item.payloadType, item.toolName, item.summary, item.text]) if (value) searchChunks.push(value);
+    itemCollector.add(item);
+    searchText.add([item.role, item.payloadType, item.toolName, item.summary, item.text]);
   };
 
-  const rl = readline.createInterface({ input: fs.createReadStream(sourcePath, { encoding: "utf8" }), crlfDelay: Infinity });
-  for await (const line of rl) {
-    lineCount += 1;
+  for await (const sourceLine of iterateSourceLines(sourcePath)) {
+    const { line, lineNo } = sourceLine;
+    lineCount = lineNo;
     if (!line.trim()) continue;
     let entry: JsonObject;
     try {
       entry = JSON.parse(line) as JsonObject;
     } catch (error) {
-      errors.push(`Line ${lineCount}: ${(error as Error).message}`);
+      const message = `Line ${lineCount}: ${(error as Error).message}`;
+      if (errors.length < 10) errors.push(message);
+      addItem({ type: "parse_error" }, { payloadType: "error", summary: message });
       continue;
     }
     const timestamp = stringOrNull(entry.timestamp);
@@ -115,7 +119,7 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
         });
       }
       for (const block of contentBlocks(message.content, "thinking")) {
-        addItem(entry, { role: "assistant", payloadType: "reasoning", text: stringOrNull(block.thinking), model: stringOrNull(message.model) });
+        addItem(entry, { role: null, payloadType: "reasoning", text: stringOrNull(block.thinking), model: stringOrNull(message.model) });
       }
       for (const block of contentBlocks(message.content, "toolCall")) {
         const callId = stringOrNull(block.id);
@@ -131,7 +135,7 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
           outputText: null,
           status: "started"
         };
-        tools.push(tool);
+        toolCollector.add(tool);
         if (callId) toolsByCallId.set(callId, tool);
       }
       continue;
@@ -146,14 +150,14 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
         existing.outputText = output;
         existing.status = message.isError ? "error" : "completed";
       } else {
-        tools.push({ sessionId: "", turnId: "main", timestamp: stringOrNull(entry.timestamp), toolName, callId, argumentsJson: null, outputText: output, status: message.isError ? "error" : "completed" });
+        toolCollector.add({ sessionId: "", turnId: "main", timestamp: stringOrNull(entry.timestamp), toolName, callId, argumentsJson: null, outputText: output, status: message.isError ? "error" : "completed" });
       }
       continue;
     }
     if (role === "bashExecution") {
       const output = stringOrNull(message.output);
       addItem(entry, { payloadType: "bashExecution", toolName: "bash", text: [message.command, output].filter(Boolean).join("\n\n") });
-      tools.push({ sessionId: "", turnId: "main", timestamp: stringOrNull(entry.timestamp), toolName: "bash", callId: stringOrNull(entry.id), argumentsJson: stringifyMaybe({ command: message.command }), outputText: output, status: message.cancelled ? "cancelled" : Number(message.exitCode) === 0 ? "completed" : "error" });
+      toolCollector.add({ sessionId: "", turnId: "main", timestamp: stringOrNull(entry.timestamp), toolName: "bash", callId: stringOrNull(entry.id), argumentsJson: stringifyMaybe({ command: message.command }), outputText: output, status: message.cancelled ? "cancelled" : Number(message.exitCode) === 0 ? "completed" : "error" });
       continue;
     }
     addItem(entry, { role, payloadType: role || "message", text, summary: stringOrNull(message.summary) });
@@ -162,8 +166,13 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
   const nativeId = stringOrNull(header?.id) || path.basename(sourcePath, ".jsonl");
   const cwd = stringOrNull(header?.cwd);
   const turn: ParsedTurn = { turnId: "main", startedAt, cwd, currentDate: null, approvalPolicy: null, sandboxPolicy: null };
+  const id = `pi:${nativeId}`;
+  const items = itemCollector.values();
+  const tools = toolCollector.values();
+  for (const item of items) item.sessionId = id;
+  for (const tool of tools) tool.sessionId = id;
   return {
-    id: `pi:${nativeId}`,
+    id,
     nativeId,
     provider: "pi",
     sourcePath,
@@ -185,7 +194,8 @@ export async function parsePiSessionFile(sourcePath: string, archiveState: Archi
     turns: [turn],
     items,
     tools,
-    searchText: [cwd, sessionName, ...searchChunks].filter(Boolean).join("\n")
+    searchText: [cwd, sessionName, searchText.value()].filter(Boolean).join("\n"),
+    deferredRecords: itemCollector.deferredCount
   };
 }
 

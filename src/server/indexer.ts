@@ -2,10 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { AppConfig } from "./config.js";
-import { parseCodexJsonlFile } from "./parser.js";
-import { parseClaudeJsonlFile } from "./claude-parser.js";
-import { parseGeminiSessionFile } from "./gemini-parser.js";
-import { parsePiSessionFile } from "./pi-parser.js";
+import { catalogSessionFile } from "./catalog.js";
 import { PARSER_VERSION, ViewerDatabase } from "./database.js";
 import type { ArchiveState, IndexStatus, SessionRoot } from "../shared/types.js";
 
@@ -119,14 +116,13 @@ export class SessionIndexer {
   }
 
   private parseFile(root: SessionRoot, file: string) {
-    if (root.provider === "claude") return parseClaudeJsonlFile(file, root.kind);
+    let cwd: string | null = null;
     if (root.provider === "gemini") {
       const relative = path.relative(root.path, file);
       const projectSlug = relative.split(path.sep)[0];
-      return parseGeminiSessionFile(file, root.kind, this.config.geminiProjectPaths.get(projectSlug) || null);
+      cwd = this.config.geminiProjectPaths.get(projectSlug) || null;
     }
-    if (root.provider === "pi") return parsePiSessionFile(file, root.kind);
-    return parseCodexJsonlFile(file, root.kind);
+    return catalogSessionFile(root.provider, file, root.kind, cwd);
   }
 }
 

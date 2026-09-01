@@ -14,11 +14,8 @@ export interface SessionFilters {
   to: string;
   tool: string;
   provider: string;
-  modelProvider: string;
-  originator: string;
   archived: string;
   hasErrors: string;
-  sort: string;
 }
 
 export const defaultFilters: SessionFilters = {
@@ -28,11 +25,8 @@ export const defaultFilters: SessionFilters = {
   to: "",
   tool: "",
   provider: "",
-  modelProvider: "",
-  originator: "",
   archived: "",
-  hasErrors: "",
-  sort: "newest"
+  hasErrors: ""
 };
 
 export async function getIndexStatus(): Promise<IndexStatus> {
@@ -47,26 +41,44 @@ export async function getFacets(): Promise<FacetsResponse> {
   return getJson("/api/facets");
 }
 
-export async function getSessions(filters: SessionFilters): Promise<SessionListResponse> {
+export async function getSessions(filters: SessionFilters, offset = 0, signal?: AbortSignal): Promise<SessionListResponse> {
   const params = toParams({ ...filters, tool: "" });
   params.set("limit", "100");
-  return getJson(`/api/sessions?${params.toString()}`);
+  params.set("offset", String(offset));
+  return getJson(`/api/sessions?${params.toString()}`, { signal });
 }
 
-export async function getSession(id: string): Promise<SessionDetailResponse> {
-  return getJson(`/api/sessions/${encodeURIComponent(id)}`);
+export async function getSession(id: string, options?: {
+  offset?: number;
+  limit?: number;
+  tools?: string[];
+  categories?: string[];
+  knownCategories?: readonly string[];
+  includeTools?: boolean;
+}): Promise<SessionDetailResponse> {
+  const params = new URLSearchParams();
+  if (options) {
+    params.set("offset", String(options.offset || 0));
+    params.set("limit", String(options.limit || 100));
+    params.set("tool", (options.tools || []).join(","));
+    params.set("category", (options.categories || []).join(","));
+    params.set("knownCategory", (options.knownCategories || []).join(","));
+    if (options.includeTools === false) params.set("includeTools", "false");
+  }
+  const query = params.toString();
+  return getJson(`/api/sessions/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
 }
 
 export async function resolveSession(value: string): Promise<ResolveSessionResponse> {
   return getJson(`/api/resolve?value=${encodeURIComponent(value)}`);
 }
 
-export function exportUrl(id: string, format: "markdown" | "html", mode: "conversation" | "readable" | "trace"): string {
-  return `/api/sessions/${encodeURIComponent(id)}/export?format=${format}&mode=${mode}`;
+export function exportUrl(id: string, format: "markdown" | "html", mode: "conversation" | "readable" | "trace", inline = false): string {
+  return `/api/sessions/${encodeURIComponent(id)}/export?format=${format}&mode=${mode}${inline ? "&inline=true" : ""}`;
 }
 
-export async function getRawItem(id: number): Promise<RawItemResponse> {
-  return getJson(`/api/raw/${id}`);
+export async function getRawItem(sessionId: string, id: number): Promise<RawItemResponse> {
+  return getJson(`/api/sessions/${encodeURIComponent(sessionId)}/raw/${id}`);
 }
 
 export function filtersFromUrl(): SessionFilters {
@@ -79,11 +91,8 @@ export function filtersFromUrl(): SessionFilters {
     to: params.get("to") || "",
     tool: params.get("tool") || "",
     provider: params.get("provider") || "",
-    modelProvider: params.get("modelProvider") || "",
-    originator: params.get("originator") || "",
     archived: params.get("archived") || "",
-    hasErrors: params.get("hasErrors") || "",
-    sort: params.get("sort") || "newest"
+    hasErrors: params.get("hasErrors") || ""
   };
 }
 

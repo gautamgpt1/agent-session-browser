@@ -1,7 +1,6 @@
 {
   "name": "agent-session-browser",
   "version": "0.1.0",
-  "private": true,
   "description": "Browse, search, filter, export, and resume local coding-agent sessions.",
   "license": "MIT",
   "repository": {
@@ -23,20 +22,35 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "bin": {
+    "asb": "bin/asb.js",
+    "agent-session-browser": "bin/asb.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "SECURITY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "scripts": {
-    "dev": "tsx src/server/index.ts",
+    "dev": "tsx watch --clear-screen=false --exclude \"dist/**\" --exclude \"test-results/**\" --exclude \"playwright-report/**\" src/server/index.ts",
     "clean": "node scripts/clean.mjs",
     "build": "tsc -p tsconfig.server.json && vite build",
-    "start": "node scripts/start-production.mjs",
-    "tui": "tsx src/tui/index.ts",
-    "tui:built": "node dist/server/tui/index.js",
+    "start": "node --disable-warning=ExperimentalWarning scripts/start-production.mjs",
+    "tui": "node --disable-warning=ExperimentalWarning --import tsx src/tui/index.ts",
+    "tui:built": "node --disable-warning=ExperimentalWarning dist/server/tui/index.js",
     "test": "vitest run --exclude tests/e2e/**",
     "test:production": "node scripts/production-smoke.mjs",
     "test:e2e": "playwright test",
-    "check": "npm run build && npm run test && npm run test:production && npm run test:e2e"
+    "test:package": "node scripts/package-smoke.mjs",
+    "prepack": "npm run clean && npm run build",
+    "check": "npm run build && npm run test && npm run test:production && npm run test:e2e && npm run test:package"
   },
   "dependencies": {
+    "@streamparser/json": "^0.0.26",
     "chokidar": "^4.0.3",
     "express": "^5.2.1",
     "lucide-react": "^1.21.0",
@@ -47,11 +61,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
-    "@vitejs/plugin-react": "^6.1.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.1.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",

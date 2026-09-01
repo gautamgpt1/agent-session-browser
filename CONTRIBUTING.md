@@ -16,6 +16,8 @@ npm run check
 npm audit
 ```
 
+The complete check includes a clean npm tarball installation and starts both packaged interfaces from outside the repository.
+
 ## Provider Parser Changes
 
 Provider history formats are external and can change without notice. Parser changes should:

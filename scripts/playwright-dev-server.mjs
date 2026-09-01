@@ -13,8 +13,13 @@ const env = {
   AGENT_SESSION_BROWSER_PORT: process.env.AGENT_SESSION_BROWSER_PORT || "4174"
 };
 
-const command = process.platform === "win32" ? "cmd.exe" : "npm";
-const args = process.platform === "win32" ? ["/c", "npm.cmd", "run", "dev"] : ["run", "dev"];
+const command = process.execPath;
+const args = [
+  "--disable-warning=ExperimentalWarning",
+  "--import",
+  "tsx",
+  "src/server/index.ts"
+];
 
 const child = spawn(command, args, {
   cwd: root,

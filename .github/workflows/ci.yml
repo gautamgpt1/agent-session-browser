@@ -25,6 +25,7 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:production
+      - run: npm run test:package
       - run: npm audit --audit-level=high
 
   browser:
