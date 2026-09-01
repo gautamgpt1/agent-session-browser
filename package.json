@@ -54,7 +54,7 @@
     "chokidar": "^4.0.3",
     "express": "^5.2.1",
     "lucide-react": "^1.21.0",
-    "react": "^19.2.3",
+    "react": "^19.2.8",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
@@ -63,7 +63,7 @@
     "@playwright/test": "^1.57.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.2",
-    "@types/react": "^19.2.7",
+    "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.1.1",
     "tsx": "^4.21.0",
