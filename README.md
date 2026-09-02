@@ -1,72 +1,114 @@
 # Agent Session Browser
 
-Agent Session Browser turns the local history written by Codex CLI, Claude Code, Gemini CLI, and Pi into searchable, readable conversations without modifying the source files.
+A local-first web interface, terminal UI, and CLI for browsing, reading, filtering, exporting, and resuming coding-agent sessions.
 
-## Why Agent Session Browser
+Agent Session Browser turns the history already stored by **Codex CLI**, **Claude Code**, **Gemini CLI**, and **Pi** into readable conversations without modifying the original session files.
 
-Important decisions and final answers often disappear inside long terminal transcripts. Keeping a separate notebook of useful agent outputs duplicates information that already exists on disk, while opening raw JSONL makes the conversation difficult to follow. Agent Session Browser provides one local interface to:
+## See it in action
 
-- Browse sessions by working directory and recency.
-- Search message, reasoning, tool, and metadata content directly in the original session files.
-- Read clean user/final-answer conversations or inspect the full provider trace.
-- Filter individual message, reasoning, lifecycle, error, and tool categories.
-- Inspect the lossless raw source record and provider metadata for any item.
-- Copy provider-native resume commands.
-- Export a session as portable Markdown or self-contained offline HTML.
-- Browse, search, export, and resume from a keyboard-first TUI.
+### Web interface
 
-Everything runs on the local machine. Agent Session Browser does not upload session data, call an AI API, or write to agent history files.
+![Agent Session Browser web demo showing session browsing, transcript filtering, and export](docs/assets/web-demo.gif)
 
-## Supported Sources
+### Terminal interface
 
-| Agent | Default history location | Resume command |
-| --- | --- | --- |
-| Codex CLI | `~/.codex/sessions` and `~/.codex/archived_sessions` | `codex resume <id>` |
-| Claude Code | `~/.claude/projects` | `claude --resume <id>` |
-| Gemini CLI | `~/.gemini/tmp/<project>/chats` | `gemini --resume <id>` |
-| Pi | `~/.pi/agent/sessions` | `pi --session <id>` |
+![Agent Session Browser TUI demo showing cross-provider browsing, transcript search, provider filtering, and layout switching](docs/assets/tui-demo.gif)
 
-Claude subagent transcripts remain distinct from their parent sessions. Gemini project paths are recovered from `projects.json` and `.project_root` markers. Pi v3 branches, compactions, summaries, model changes, usage, and tool results are retained.
+<p align="center"><sub>Demo data is synthetic. Your session history stays on your machine.</sub></p>
 
-Provider formats are external, versioned contracts. Unknown records are preserved and remain available under additional provider events and raw JSON instead of being silently discarded.
+## Why this exists
 
-## Requirements
+Terminal coding agents preserve useful context: prompts, final answers, reasoning, plans, tool calls, command output, file changes, hooks, warnings, errors, token usage, and provider-specific events. But that history is scattered across provider folders and stored as JSON, JSONL, or other machine-oriented records.
 
-- Node.js 22.13 or newer.
-- npm 10 or newer.
-- At least one supported agent history folder for real data.
-- A modern Chromium, Firefox, or Safari browser for the web UI.
+That makes three everyday tasks harder than they should be:
 
-The matching agent CLI is only required when resuming a session. Reading and exporting history does not require provider authentication.
+1. **Reading an old session.** Raw history files are difficult to navigate as a coherent conversation.
+2. **Finding the relevant session.** You may remember the project or opening prompt, but not which agent or session contained the work.
+3. **Choosing the right session to resume.** Titles and first prompts are often too similar. Seeing the actual transcript makes it much easier to resume the correct session from the terminal.
 
-## Quick Start
+Agent Session Browser provides one local place to browse histories from all four agents, narrow sessions by project and date, inspect their contents in a human-readable form, and resume the right session with its native provider CLI.
 
-> The npm package will be published with the first release. Until then, use the source instructions below.
+## Features
 
-After the package is published, open the terminal interface without cloning the repository:
+### Find the right session
+
+- Browse Codex CLI, Claude Code, Gemini CLI, and Pi sessions together or one provider at a time.
+- Find sessions by their first user prompt or session ID.
+- Group sessions by working directory and quickly revisit recent sessions.
+- Filter by provider, working directory, date range, active or archived state, and parse status.
+- Open a session directly from its internal ID, provider-native ID, or cataloged source path.
+- Refresh manually or let the local catalog update as supported history folders change.
+
+### Read sessions as conversations
+
+- Start with a clean conversation containing user messages and provider-confirmed final answers.
+- Reveal progress and incomplete messages, instructions and context, reasoning, plans, tool calls and output, file changes, hooks, lifecycle events, usage updates, warnings, errors, and provider-specific records.
+- Filter the selected transcript by exact tool name and individual event category.
+- Read message content as GitHub Flavored Markdown instead of escaped payloads.
+- See the provider, workspace, date, model, archive state, and visible item and tool-call counts when available.
+- Inspect the original raw source record for any transcript item.
+- Expand shortened messages inline from the unchanged source file.
+- Move through large filtered transcripts with explicit page controls.
+- Use light or dark mode and collapse the session sidebar when more reading space is needed.
+
+### Resume and export
+
+- Copy a session ID or provider-native resume command from the web interface.
+- Preview the selected conversation in the TUI before resuming a similarly named session.
+- Resume from the TUI in the session's recorded working directory.
+- Export sessions as portable Markdown or self-contained offline HTML.
+- Open a printable transcript for printing or saving as PDF.
+- Choose conversation, readable, or full trace output for non-interactive CLI exports.
+
+### Local-first by design
+
+- Discovers histories from their standard user-level locations.
+- Leaves provider history files unchanged.
+- Stores a lightweight local SQLite catalog of paths and session summaries rather than a second copy of every transcript.
+- Runs without an AI API, provider login, cloud account, telemetry, or session upload.
+- Binds the web interface to `127.0.0.1` only.
+
+## Quick start
+
+### Requirements
+
+- Node.js **22.13 or newer**
+- npm
+- At least one supported coding agent with local session history
+- A modern browser for the web interface
+
+The matching provider CLI is required only when resuming a session. Browsing, reading, filtering, and exporting existing history do not require provider authentication.
+
+### Run without installing
+
+Open the terminal interface from any directory:
 
 ```sh
 npx agent-session-browser
 ```
 
-Agent Session Browser works from any directory and discovers histories from their standard user-level locations. Install it globally to keep the short command available:
+Start the web interface and open it in your default browser:
+
+```sh
+npx agent-session-browser web
+```
+
+### Install the short command
 
 ```sh
 npm install --global agent-session-browser
-asb
 ```
 
-The bare command opens the TUI. Start the browser interface explicitly:
+The bare command opens the TUI. Add `web` for the browser interface:
 
 ```sh
+asb
 asb web
 ```
 
-`asb web` starts the local server and opens it in the default browser. Use `asb web --no-open` to print the URL without opening it, or `asb web --port 4180` to choose another port.
+Use `asb web --no-open` to print the local URL without opening a browser, or `asb web --port 4180` to choose another port.
 
-## Run From Source
-
-Clone the repository and install its locked dependencies:
+### Run from source
 
 ```sh
 git clone https://github.com/gautamgpt1/agent-session-browser.git
@@ -75,55 +117,154 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173`. The server builds a lightweight session catalog on startup and watches available source folders for changes. Transcript content is read from the original files only when it is opened, searched, or exported.
+Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
 
-For a production build:
+Start the source TUI with:
+
+```sh
+npm run tui
+```
+
+Run this source command from the cloned repository. The application still discovers user-level agent histories rather than limiting results to that repository's working directory.
+
+For a production web build:
 
 ```sh
 npm run build
 npm start
 ```
 
-`npm start` serves the compiled application on the same loopback address. Agent Session Browser intentionally has no option to bind to a network interface.
+## Web interface
+
+![Agent Session Browser web interface showing working-directory groups, recent sessions, and a readable transcript](docs/assets/web-screenshot.png)
+
+Use the web interface for the most detailed session inspection:
+
+1. Find a session by its first prompt or ID, or narrow the catalog by provider, working directory, date, archive state, or parse status.
+2. Select a session from the recent list or its working-directory group.
+3. Read the default user-and-final-answer conversation.
+4. Open **Filter** to include reasoning, plans, tools, hooks, file changes, lifecycle events, errors, raw provider events, or any other recorded category.
+5. Select exact tool names when you want only their calls and output.
+6. Inspect a raw record, copy the native resume command, or export the transcript.
+
+The finder also accepts an exact internal session ID, provider-native session ID, or known source-file path. Press **Enter** to open an exact match directly.
 
 ## Terminal UI
 
-When running from source, start the interactive TUI with:
+![Agent Session Browser terminal UI with session and transcript panes](docs/assets/tui-screenshot.png)
 
-```sh
-npm run tui
-```
+The TUI is designed for the moment you are already in a terminal and need to answer: **Which session should I resume?**
+
+It places the session list and selected conversation side by side. You can browse every supported provider, restrict the list to one provider, search session candidates, search inside the selected conversation, and switch between session-only, transcript-only, and split views. The transcript pane focuses on user prompts and provider-confirmed final answers so you can identify the session before resuming it.
+
+### TUI controls
 
 | Key | Action |
 | --- | --- |
-| `Left` / `Right` | Focus the session list or transcript |
-| `Up` / `Down` | Move through sessions or scroll the focused transcript by one wrapped line |
-| `Page Up` / `Page Down` | Move ten sessions or one transcript viewport |
-| Type / `Backspace` | Search |
-| `Ctrl+S` | Switch session filtering and transcript preview search |
-| `Tab` | Cycle agents |
-| `F2` | Cycle conversation, readable, and trace views |
-| `Ctrl+O` | Expand the selected shortened record from its original source |
-| `Ctrl+E` | Export offline HTML |
-| `Ctrl+R` | Show the resume command |
-| `Enter` | Resume with the provider CLI |
-| `Esc` | Exit |
+| `Left` / `Right` | Focus the session list or transcript pane |
+| `Up` / `Down` | Move through sessions or scroll the focused transcript one wrapped line |
+| `Page Up` / `Page Down` | Jump one visible page in the focused pane |
+| Type / `Backspace` | Search the focused session list or transcript |
+| `Tab` | Cycle through all providers, Codex, Claude Code, Gemini CLI, and Pi |
+| `Ctrl+L` | Cycle between split, session-only, and transcript-only views |
+| `Ctrl+O` | Expand the current shortened message when the inline hint is visible |
+| `Ctrl+R` | Show the provider-native resume command |
+| `Enter` | Resume the selected session with its provider CLI |
+| `Esc` / `Ctrl+C` | Exit |
 
-Installed command examples:
+When resuming, the TUI launches the installed provider CLI in the working directory recorded by the session. If that directory no longer exists, it leaves the session untouched and explains why it cannot resume it directly.
+
+## Supported agents
+
+| Agent | Default history location | Native resume command |
+| --- | --- | --- |
+| Codex CLI | `~/.codex/sessions` and `~/.codex/archived_sessions` | `codex resume <id>` |
+| Claude Code | `~/.claude/projects` | `claude --resume <id>` |
+| Gemini CLI | `~/.gemini/tmp/<project>/chats` | `gemini --resume <id>` |
+| Pi | `~/.pi/agent/sessions` | `pi --session <id>` |
+
+Provider-specific coverage includes:
+
+- **Codex CLI:** active and archived sessions, messages, reasoning, plans, tools, file changes, hooks, lifecycle events, usage, warnings, and additional provider records.
+- **Claude Code:** project sessions and distinct subagent transcripts, including tools, results, context, metadata, and provider events.
+- **Gemini CLI:** project-path recovery, current chat histories, and supported legacy session structures.
+- **Pi:** session branches, compactions, summaries, model changes, usage, tool calls, and tool results.
+
+Provider history formats change over time. Recognized content is normalized for readable display, while unknown records remain available as provider events and raw JSON rather than being silently dropped.
+
+## CLI usage
+
+The installed `asb` command opens the TUI by default and accepts session discovery, resume, and export options:
 
 ```sh
+# Find sessions from all providers
 asb --query "authentication failure"
-asb --provider claude --query "migration"
-asb --session <id-or-jsonl-path> --print-resume
-asb --session <id-or-jsonl-path> --export html --mode conversation
-asb tui --help
+
+# Restrict the session list to one provider
+asb --provider claude --query "database migration"
+
+# Print the native resume command for an exact session ID or source path
+asb --session <id-or-path> --print-resume
+
+# Export without opening the interactive TUI
+asb --session <id-or-path> --export html --mode readable
+asb --session <id-or-path> --export md --mode conversation
 ```
 
-When stdout is redirected, the TUI command prints tab-separated session results instead of terminal control sequences.
+When running from source, replace `asb` with `npm run tui -- --`.
+
+### Options
+
+```text
+-q, --query <text>       Find sessions by first prompt or ID
+--provider <provider>    Restrict results to codex, claude, gemini, or pi
+--session <id-or-path>   Resolve one session by ID or cataloged source path
+--print-resume           Print the native resume command
+--export <md|html>       Export without opening the interactive TUI
+--mode <mode>            conversation, readable, or trace
+-h, --help               Show command help
+```
+
+When stdout is redirected, the command prints tab-separated session results instead of terminal control sequences. Each row contains the internal session ID, provider, timestamp, working directory, and first user message. Use `npm run --silent tui -- ...` when piping through npm so npm does not add its script banner.
+
+## Transcript filters and export modes
+
+The web interface begins with the conversation and lets you add or remove exact categories for the selected session. Depending on what the provider recorded, these can include:
+
+- assistant progress, incomplete, and unclassified messages
+- developer instructions, turn context, and session metadata
+- reasoning and plans
+- command execution, MCP tools, dynamic tools, subagents, web search, image tools, and other work items
+- tool output and streaming output
+- file changes and patches
+- task, turn, thread, process, compaction, and hook lifecycle events
+- token usage, rate limits, and tool-status updates
+- review, approval, environment, app-server, and realtime events
+- warnings, errors, attachments, snapshots, and other provider-specific records
+
+Non-interactive CLI exports offer three levels of detail:
+
+| Mode | Includes |
+| --- | --- |
+| **Conversation** | User messages and provider-confirmed final answers |
+| **Readable** | Conversation content plus assistant progress, reasoning, and tool activity |
+| **Trace** | Every normalized event plus the original raw source records |
+
+## Exports
+
+| Format | Best for |
+| --- | --- |
+| **Offline HTML** | A styled, self-contained transcript that opens without Agent Session Browser |
+| **Markdown** | Notes, source control, audits, and further editing |
+| **Print / PDF** | Printing or saving the complete readable transcript from the browser |
+
+The web interface exports its readable view as HTML or Markdown and can open the same view in a printable page. The CLI can export conversation, readable, or trace modes.
+
+Exports can contain prompts, source code, command output, file paths, environment details, credentials, or other secrets captured in the original agent session. Review exported files before sharing them.
 
 ## Configuration
 
-Agent Session Browser auto-detects standard user-level history locations. Override any location with environment variables when histories live on another drive, in WSL, or on a mounted remote home.
+Standard history locations are detected automatically. Use environment variables when an agent home is on another drive, inside WSL, or mounted from another machine.
 
 | Variable | Purpose |
 | --- | --- |
@@ -131,92 +272,103 @@ Agent Session Browser auto-detects standard user-level history locations. Overri
 | `AGENT_SESSION_BROWSER_CLAUDE_HOME` | Claude home containing `projects` |
 | `AGENT_SESSION_BROWSER_GEMINI_HOME` | Gemini home containing `tmp` |
 | `AGENT_SESSION_BROWSER_PI_HOME` | Pi home containing `agent/sessions` |
-| `AGENT_SESSION_BROWSER_DATA_DIR` | Lightweight SQLite catalog and exported TUI files |
-| `AGENT_SESSION_BROWSER_PORT` | Local HTTP port; defaults to `4173` |
+| `AGENT_SESSION_BROWSER_DATA_DIR` | Local SQLite catalog and CLI export directory |
+| `AGENT_SESSION_BROWSER_PORT` | Local web port; defaults to `4173` |
+| `AGENT_SESSION_BROWSER_DISABLE_WATCHER=1` | Disable automatic watching of supported history folders |
 
-Official `CODEX_HOME` and `CLAUDE_CONFIG_DIR` settings are respected.
+The standard `CODEX_HOME` and `CLAUDE_CONFIG_DIR` variables are also respected.
 
-Examples:
+### Examples
+
+Linux, macOS, or WSL:
 
 ```sh
-# Linux, macOS, or WSL
 AGENT_SESSION_BROWSER_CODEX_HOME=/mnt/c/Users/alice/.codex npm run dev
 ```
 
+Windows PowerShell:
+
 ```powershell
-# Windows PowerShell
 $env:AGENT_SESSION_BROWSER_CLAUDE_HOME = 'D:\agent-data\claude'
 npm run dev
 ```
 
-The default index location follows each platform:
+### Local data directory
 
-| Platform | Data directory |
+| Platform | Default location |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\Agent Session Browser` |
 | macOS | `~/Library/Application Support/Agent Session Browser` |
 | Linux / WSL | `${XDG_DATA_HOME:-~/.local/share}/agent-session-browser` |
 
-For SSH-hosted histories, mount or sync the remote agent home locally and point the matching environment variable at it. Agent Session Browser does not open SSH connections or copy source data itself.
+For histories stored on another machine, mount or synchronize the relevant agent home locally and point the matching environment variable to it.
 
-## Search and Views
+## How it works
 
-The sidebar search streams through the original session files without storing a second transcript copy. Searches over very large histories can take a few seconds; a visible status remains until the scan finishes. Pressing Enter also tries an exact internal ID, provider-native ID, or cataloged JSONL path, which makes deeply nested sessions directly addressable.
+1. Agent Session Browser discovers supported history files and builds a lightweight SQLite catalog containing their paths and small session summaries.
+2. The session finder uses cataloged project names, first prompts, and IDs; opening a transcript reads its original source file.
+3. Each provider's records are normalized into one display model while preserving access to provider-specific events and raw source records.
+4. Large filtered transcripts are presented in explicit pages, and shortened messages can be expanded inline from their original source.
+5. Exports are created only when requested, and resume actions hand the selected native session ID to the matching provider CLI.
 
-Session filters narrow candidates by agent, working directory, date, archive state, and parse errors. Large catalogs load in explicit pages, so the sidebar and TUI never silently discard sessions. Transcript filters only change what is visible inside the selected session; selecting tool checkboxes does not hide unrelated session cards.
+You do not need to understand the providers' JSON or JSONL formats to use the application.
 
-The default transcript shows user messages and source-confirmed final answers. Progress messages, reasoning, plans, tool calls, tool output, lifecycle events, token updates, warnings, and unknown provider records are individually selectable.
+## Privacy and security
 
-## Exports
+Agent Session Browser is a single-user local application.
 
-- **Offline HTML** is styled, self-contained, dark-mode aware, printable, and escapes all stored content.
-- **Markdown** is portable plain text suitable for source control, notes, and audits.
-- **Conversation** contains user messages and provider-confirmed final replies.
-- **Readable** adds progress, reasoning, and tool activity.
-- **Trace** also includes raw source records and is available from the TUI/API internals.
+- Provider history files are read without being modified, moved, or deleted.
+- Transcript bodies and tool output are not copied into the SQLite catalog; the catalog can contain local paths and short session summaries.
+- The web server binds only to `127.0.0.1` and rejects non-loopback host headers and cross-origin browser requests.
+- No telemetry, AI API call, session upload, or other external network request is implemented.
+- A provider CLI is launched only when you explicitly resume a selected session.
 
-To keep unusually large sessions responsive without hiding history, Codex, Claude Code, Gemini CLI, and Pi files are normalized into a compact one-session semantic cache and one filtered transcript page is mounted in the browser at a time. First, previous, next, last, and direct page controls keep every matching item reachable without allowing the DOM to grow indefinitely. Parsing has no record-count or record-size sampling path: valid oversized records are fully decoded, including every nested message in legacy monolithic Gemini sessions. Long bodies use an explicit presentation preview that can be expanded inline from the unchanged source file.
+The local web server has no authentication and is not intended to be exposed through port forwarding, a reverse proxy, a shared host, or a public network interface. Anyone who can read your operating-system account can generally read the original agent histories and any exports you create.
 
-Conversation, readable, and raw trace exports stream incrementally through a temporary file instead of constructing the complete transcript in memory. Browser download files are removed after delivery. TUI exports use mode-specific names and add a numeric suffix rather than overwriting an existing export.
-
-Exports can contain prompts, source code, command output, local paths, environment details, and secrets captured by an agent. Review them before sharing.
-
-## Privacy and Security
-
-Agent Session Browser is read-only with respect to provider history. Its SQLite catalog stores paths and small session summaries, not transcript records or tool output. Opening a session parses its source file into temporary process memory; exports intentionally contain the selected content.
-
-- The web server binds only to `127.0.0.1`.
-- Requests with non-loopback Host headers or cross-origin browser origins are rejected.
-- API responses are not cached and browser security headers are enabled.
-- Resume execution uses direct executable arguments, not a command shell.
-- No telemetry or external network request is implemented.
-
-Anyone who can read your OS user account can usually read the original agent files and any exports you create. Use normal full-disk encryption and account permissions for sensitive work. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Report security issues privately through the repository's **Security** tab. Do not attach real session files, credentials, or private trace data to a public issue. See [SECURITY.md](SECURITY.md) for the full policy.
 
 ## Development
+
+Install dependencies and run the main checks:
 
 ```sh
 npm ci
 npm run build
 npm test
+npm run test:production
 npm run test:package
+```
+
+Install Chromium once before running browser tests:
+
+```sh
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Run the complete suite with `npm run check` after the Playwright browser is installed. Tests cover all four providers, active and archived sessions, malformed and truncated data, lossless oversized records, streamed complete exports, incremental refresh, deletion pruning, indexed raw lookup, complete catalog and transcript paging, responsive layout, keyboard-accessible dialogs, XSS-safe export, HTTP boundary checks, clipboard feedback, filtering, themes, and resume commands.
+Run the complete build, unit, production, browser, and package test sequence with:
 
-Run `npm run clean` to remove build output, coverage, Playwright output, and temporary test databases.
+```sh
+npm run check
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and parser expectations.
+Run `npm run clean` to remove generated build, coverage, Playwright, and temporary test output.
 
-## Upstream References
+## Contributing
 
-- [Claude Code session storage and resume](https://code.claude.com/docs/en/sessions)
-- [Gemini CLI session management](https://geminicli.com/docs/cli/session-management/)
-- [Pi session file format](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/session.md)
+Contributions are welcome, especially:
 
-Provider fixtures are synthetic and contain no real user conversations.
+- fixtures for newly observed provider record types
+- parser fixes for changed agent-history formats
+- Windows, macOS, Linux, and WSL compatibility reports
+- improvements to search, accessibility, exports, or terminal workflows
+- documentation and synthetic demo data
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use synthetic or carefully redacted fixtures; never commit real private session histories.
+
+For bugs and feature requests, [open an issue](https://github.com/gautamgpt1/agent-session-browser/issues).
+
+Created and maintained by [Gautam Gupta](https://github.com/gautamgpt1).
 
 ## License
 

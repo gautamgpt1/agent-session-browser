@@ -1,8 +1,12 @@
 {
   "name": "agent-session-browser",
   "version": "0.1.0",
-  "description": "Browse, search, filter, export, and resume local coding-agent sessions.",
+  "description": "Browse, find, filter, export, and resume local coding-agent sessions.",
   "license": "MIT",
+  "author": {
+    "name": "Gautam Gupta",
+    "url": "https://github.com/gautamgpt1"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gautamgpt1/agent-session-browser.git"
@@ -17,7 +21,11 @@
     "codex",
     "claude-code",
     "gemini-cli",
-    "jsonl-viewer"
+    "pi-coding-agent",
+    "jsonl-viewer",
+    "terminal-ui",
+    "local-first",
+    "developer-tools"
   ],
   "engines": {
     "node": ">=22.13.0"
@@ -37,6 +45,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --clear-screen=false --exclude \"dist/**\" --exclude \"test-results/**\" --exclude \"playwright-report/**\" src/server/index.ts",
+    "demo:web": "node scripts/demo.mjs web",
+    "demo:tui": "node scripts/demo.mjs tui",
     "clean": "node scripts/clean.mjs",
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node --disable-warning=ExperimentalWarning scripts/start-production.mjs",

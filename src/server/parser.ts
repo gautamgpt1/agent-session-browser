@@ -176,7 +176,7 @@ export async function parseCodexJsonlFile(sourcePath: string, archiveState: Arch
     const summary = normalizeSummary(payload);
     const toolName = normalizeToolName(payloadType, payload);
     const callId = stringOrNull(payload.call_id);
-    const phase = stringOrNull(payload.phase);
+    const phase = stringOrNull(payload.phase) || inferAssistantPhase(role, payloadType);
     const nativeId = stringOrNull(payload.id) || stringOrNull(envelope.params?.itemId);
     const parentId = stringOrNull(payload.parent_id) || stringOrNull(payload.parentId);
     const requestId = stringOrNull(payload.request_id) || stringOrNull(envelope.params?.requestId);
@@ -308,6 +308,12 @@ function detectRole(envelopeType: string, payload: Record<string, unknown>): str
   if (role) return role;
   if (payload.type === "user_message" || payload.type === "userMessage") return "user";
   if (payload.type === "agent_message" || payload.type === "agentMessage") return "assistant";
+  return null;
+}
+
+function inferAssistantPhase(role: string | null, payloadType: string | null): string | null {
+  if (role !== "assistant") return null;
+  if (payloadType === "message" || payloadType === "agent_message" || payloadType === "agentMessage") return "final_answer";
   return null;
 }
 

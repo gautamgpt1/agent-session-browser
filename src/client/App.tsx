@@ -11,8 +11,10 @@ import {
   Folder,
   FolderOpen,
   Moon,
+  Minus,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Printer,
   RefreshCw,
   Search,
@@ -242,6 +244,8 @@ const CATEGORY_GROUPS = [
 
 const KNOWN_CATEGORIES = CATEGORY_GROUPS.flatMap((group) => group.options.map((option) => option.key));
 const DEFAULT_VISIBLE_CATEGORIES = ["user", "assistantFinal"];
+const DIRECTORY_PREVIEW_LIMIT = 6;
+const PROJECT_SESSION_PREVIEW_LIMIT = 5;
 
 export function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -273,6 +277,8 @@ export function App() {
   const [narrowViewport, setNarrowViewport] = useState(() => window.matchMedia(NARROW_VIEWPORT_QUERY).matches);
   const listAbort = useRef<AbortController | null>(null);
   const detailRequest = useRef(0);
+  const preserveNextFilterSelection = useRef(true);
+  const initializedAdditionalCategories = useRef(new Set<string>());
   const rawDialogRef = useModalFocus<HTMLElement>(rawItem !== null, () => setRawItem(null));
 
   useEffect(() => {
@@ -294,7 +300,12 @@ export function App() {
 
   useEffect(() => {
     writeFiltersToUrl(filters);
-    const timer = window.setTimeout(() => void loadLists(false), filters.q ? 400 : 0);
+    const preserveSelection = preserveNextFilterSelection.current;
+    preserveNextFilterSelection.current = false;
+    const timer = window.setTimeout(
+      () => void loadLists(false, preserveSelection),
+      filters.q.trim() ? 120 : filters.cwd ? 250 : 0
+    );
     return () => window.clearTimeout(timer);
   }, [filters]);
 
@@ -309,6 +320,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedId) {
+      detailRequest.current += 1;
       setDetail(null);
       return;
     }
@@ -339,13 +351,13 @@ export function App() {
     }
   }
 
-  async function loadLists(append: boolean) {
+  async function loadLists(append: boolean, preserveSelection = true) {
     listAbort.current?.abort();
     const abort = new AbortController();
     listAbort.current = abort;
     try {
       if (append) setSessionLoadingMore(true);
-      else if (filters.q) setSearching(true);
+      else if (filters.q.trim()) setSearching(true);
       const offset = append ? sessions.length : 0;
       const [facetResponse, sessionResponse] = await Promise.all([
         append && facets ? Promise.resolve(facets) : getFacets(),
@@ -358,8 +370,9 @@ export function App() {
         : sessionResponse.sessions);
       setSessionTotal(sessionResponse.total);
       setStatus(sessionResponse.status);
-      if (!append && !selectedId && sessionResponse.sessions[0]) {
-        setSelectedId(sessionResponse.sessions[0].id);
+      if (!append && (!selectedId || (!preserveSelection
+        && (filters.q.trim() || !sessionResponse.sessions.some((session) => session.id === selectedId))))) {
+        replaceSelectedSession(sessionResponse.sessions[0]?.id || null);
       }
     } catch (listError) {
       if ((listError as Error).name === "AbortError") return;
@@ -379,7 +392,7 @@ export function App() {
         setDetailLoadingMore(true);
       } else {
         setDetailLoading(true);
-        setDetail(null);
+        setDetail((current) => current?.session.id === id ? current : null);
       }
       const next = await getSession(id, {
         offset,
@@ -417,14 +430,20 @@ export function App() {
     if (!filters.q.trim()) return;
     const match = await resolveSession(filters.q);
     if (!match.session) return;
+    preserveNextFilterSelection.current = true;
     setFilters((current) => ({ ...current, q: "" }));
     selectSession(match.session.id);
   }
 
   function selectSession(id: string) {
-    setSelectedId(id);
+    replaceSelectedSession(id);
     if (narrowViewport) setSidebarOpen(false);
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#session=${encodeURIComponent(id)}`);
+  }
+
+  function replaceSelectedSession(id: string | null) {
+    setSelectedId(id);
+    const hash = id ? `#session=${encodeURIComponent(id)}` : "";
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
   }
 
   function updateFilter<K extends keyof SessionFilters>(key: K, value: SessionFilters[K]) {
@@ -480,6 +499,23 @@ export function App() {
     });
   }
 
+  function initializeCategoryVisibility(categories: readonly string[]) {
+    const uninitialized = categories.filter((category) => !initializedAdditionalCategories.current.has(category));
+    if (!uninitialized.length) return;
+    for (const category of uninitialized) initializedAdditionalCategories.current.add(category);
+    setVisibleCategories((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const category of uninitialized) {
+        if (!next.has(category)) {
+          next.add(category);
+          changed = true;
+        }
+      }
+      return changed ? Array.from(next) : current;
+    });
+  }
+
   const selectedSession = detail?.session || sessions.find((session) => session.id === selectedId) || null;
   const sessionFilterCount = [filters.provider, filters.cwd, filters.from, filters.to, filters.archived, filters.hasErrors]
     .filter(Boolean).length;
@@ -503,13 +539,16 @@ export function App() {
               <Search size={15} />
               <input
                 value={filters.q}
-                onChange={(event) => updateFilter("q", event.target.value)}
+                onChange={(event) => {
+                  setSearching(Boolean(event.target.value.trim()));
+                  updateFilter("q", event.target.value);
+                }}
                 onKeyDown={(event) => { if (event.key === "Enter") void openExactSession(); }}
-                placeholder="Search sessions"
-                aria-label="Search sessions"
-                title="Search content, or press Enter with a session ID or JSONL path"
+                placeholder="Find by first prompt or session ID"
+                aria-label="Find sessions"
+                title="Find sessions by their first user prompt or ID. Press Enter to open an exact ID or JSONL path."
               />
-              {filters.q && <button type="button" onClick={() => updateFilter("q", "")} title="Clear search" aria-label="Clear search"><X size={14} /></button>}
+              {filters.q && <button type="button" onClick={() => { setSearching(false); updateFilter("q", ""); }} title="Clear search" aria-label="Clear search"><X size={14} /></button>}
             </div>
             <button
               className={`sidebar-filter-trigger ${sidebarFilterOpen || sessionFilterCount ? "active" : ""}`}
@@ -522,6 +561,17 @@ export function App() {
               {sessionFilterCount > 0 && <span aria-hidden="true" />}
             </button>
           </div>
+          {(status?.running || searching) && (
+            <div className="sidebar-status" role="status" aria-live="polite">
+              <RefreshCw size={13} />
+              {searching ? "Finding sessions..." : "Cataloging sessions..."}
+            </div>
+          )}
+          {filters.q.trim() && !searching && (
+            <div className="sidebar-query-summary" role="status">
+              {formatNumber(sessionTotal)} matching {sessionTotal === 1 ? "session" : "sessions"}
+            </div>
+          )}
           {sidebarFilterOpen && <>
             <button className="sidebar-filter-backdrop" type="button" onClick={() => setSidebarFilterOpen(false)} aria-label="Close session filters" />
             <aside className="sidebar-filter-popover" aria-label="Session filters">
@@ -575,20 +625,22 @@ export function App() {
             onSelect={selectSession}
             loadingMore={sessionLoadingMore}
             onLoadMore={() => void loadLists(true)}
+            query={filters.q}
           />
-          {(status?.running || searching) && <div className="sidebar-status"><RefreshCw size={13} /> {searching ? "Searching original session files..." : "Cataloging sessions..."}</div>}
         </aside>}
 
         <section className="detail-pane">
           {selectedSession && detail ? (
             <SessionDetail
               detail={detail}
+              finderQuery={filters.q}
               selectedTools={selectedTools}
               visibleCategories={visibleCategories}
               onToggleTool={toggleTool}
               onSetTools={setTools}
               onToggleCategory={toggleCategory}
               onSetCategoryGroupVisibility={setCategoryGroupVisibility}
+              onInitializeCategoryVisibility={initializeCategoryVisibility}
               filterOpen={transcriptFilterOpen}
               onFilterClose={() => setTranscriptFilterOpen(false)}
               onFilterToggle={() => setTranscriptFilterOpen((current) => !current)}
@@ -701,7 +753,7 @@ function DirectoryCombobox({ directories, value, onChange }: {
             setQuery(next);
             setOpen(true);
             setActiveIndex(-1);
-            if (!next) onChange("");
+            onChange(next);
           }}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
@@ -758,7 +810,8 @@ function SessionList({
   selectedId,
   onSelect,
   loadingMore,
-  onLoadMore
+  onLoadMore,
+  query
 }: {
   loading: boolean;
   sessions: SessionSummary[];
@@ -767,8 +820,12 @@ function SessionList({
   onSelect: (id: string) => void;
   loadingMore: boolean;
   onLoadMore: () => void;
+  query: string;
 }) {
   const [openProjects, setOpenProjects] = useState<Set<string>>(() => new Set());
+  const [showAllProjects, setShowAllProjects] = useState(false);
+  const [expandedProjectSessions, setExpandedProjectSessions] = useState<Set<string>>(() => new Set());
+  const finding = Boolean(query.trim());
   const projectGroups = useMemo(() => {
     const groups = new Map<string, { path: string; sessions: SessionSummary[] }>();
     for (const session of sessions) {
@@ -783,8 +840,14 @@ function SessionList({
       .sort((a, b) => sessionTime(b[1][0]) - sessionTime(a[1][0]));
   }, [sessions]);
   const recentGroups = useMemo(() => {
-    return [...sessions].sort((a, b) => sessionTime(b) - sessionTime(a)).slice(0, 18);
-  }, [sessions]);
+    return finding ? sessions.slice(0, 18) : [...sessions].sort((a, b) => sessionTime(b) - sessionTime(a)).slice(0, 18);
+  }, [finding, sessions]);
+  const visibleProjectGroups = showAllProjects ? projectGroups : projectGroups.slice(0, DIRECTORY_PREVIEW_LIMIT);
+
+  useEffect(() => {
+    setShowAllProjects(false);
+    setExpandedProjectSessions(new Set());
+  }, [total, sessions[0]?.id]);
 
   useEffect(() => {
     const selected = sessions.find((session) => session.id === selectedId);
@@ -800,11 +863,15 @@ function SessionList({
   if (sessions.length === 0) return <div className="empty-state">No sessions match the current filters</div>;
   return (
     <div className="session-list">
-      <section className="sidebar-section projects-section">
+      {!finding && <section className="sidebar-section projects-section">
         <div className="sidebar-section-heading"><span>Working directories</span><small>{projectGroups.length}</small></div>
-        {projectGroups.map(([project, projectSessions]) => {
+        {visibleProjectGroups.map(([project, projectSessions]) => {
           const projectKey = normalizeProjectPath(project);
           const isOpen = openProjects.has(projectKey);
+          const showAllProjectSessions = expandedProjectSessions.has(projectKey);
+          const visibleProjectSessions = showAllProjectSessions
+            ? projectSessions
+            : projectSessions.slice(0, PROJECT_SESSION_PREVIEW_LIMIT);
           return (
             <details
               key={project}
@@ -826,16 +893,49 @@ function SessionList({
                 <small>{projectSessions.length}</small>
               </summary>
               <div className="project-sessions">
-                {projectSessions.map((session) => <SessionRow key={session.id} session={session} selected={session.id === selectedId} onSelect={onSelect} compact />)}
+                {visibleProjectSessions.map((session) => <SessionRow key={session.id} session={session} selected={session.id === selectedId} onSelect={onSelect} query={query} compact />)}
+                {projectSessions.length > PROJECT_SESSION_PREVIEW_LIMIT && (
+                  <button
+                    className="sidebar-show-more"
+                    type="button"
+                    aria-expanded={showAllProjectSessions}
+                    onClick={() => setExpandedProjectSessions((current) => {
+                      const next = new Set(current);
+                      if (showAllProjectSessions) next.delete(projectKey); else next.add(projectKey);
+                      return next;
+                    })}
+                  >
+                    {showAllProjectSessions ? <Minus size={13} /> : <Plus size={13} />}
+                    {showAllProjectSessions
+                      ? "Show fewer sessions"
+                      : `Show ${projectSessions.length - PROJECT_SESSION_PREVIEW_LIMIT} more sessions`}
+                  </button>
+                )}
               </div>
             </details>
           );
         })}
-      </section>
+        {projectGroups.length > DIRECTORY_PREVIEW_LIMIT && (
+          <button
+            className="sidebar-show-more"
+            type="button"
+            aria-expanded={showAllProjects}
+            onClick={() => setShowAllProjects((current) => !current)}
+          >
+            {showAllProjects ? <Minus size={13} /> : <Plus size={13} />}
+            {showAllProjects
+              ? "Show fewer"
+              : `Show ${projectGroups.length - DIRECTORY_PREVIEW_LIMIT} more`}
+          </button>
+        )}
+      </section>}
 
       <section className="sidebar-section recent-section">
-        <div className="sidebar-section-heading"><span>Recent sessions</span><small>{recentGroups.length}</small></div>
-        {recentGroups.map((session) => <SessionRow key={session.id} session={session} selected={session.id === selectedId} onSelect={onSelect} />)}
+        <div className="sidebar-section-heading">
+          <span>{finding ? "Matching sessions" : "Recent sessions"}</span>
+          <small>{finding && total > recentGroups.length ? `${recentGroups.length}/${formatNumber(total)}` : recentGroups.length}</small>
+        </div>
+        {recentGroups.map((session) => <SessionRow key={session.id} session={session} selected={session.id === selectedId} onSelect={onSelect} query={query} />)}
       </section>
       {sessions.length < total && (
         <div className="session-list-pagination">
@@ -849,17 +949,29 @@ function SessionList({
   );
 }
 
-function SessionRow({ session, selected, onSelect, compact = false }: {
+function SessionRow({ session, selected, onSelect, query, compact = false }: {
   session: SessionSummary;
   selected: boolean;
   onSelect: (id: string) => void;
+  query: string;
   compact?: boolean;
 }) {
+  const prompt = session.firstUserMessage || "No user prompt recorded";
+  const promptMatches = matchesFinderQuery(prompt, query);
+  const matchingIdentifier = [session.nativeId, session.id].find((identifier) => matchesFinderQuery(identifier, query));
+  const preview = query && !promptMatches && matchingIdentifier ? matchingIdentifier : prompt;
+  const previewTitle = matchingIdentifier && preview === matchingIdentifier ? `Session ID: ${matchingIdentifier}` : `First user prompt: ${prompt}`;
   return (
     <button className={`session-card ${selected ? "selected" : ""} ${compact ? "compact" : ""}`} onClick={() => onSelect(session.id)}>
       <span className="session-card-content">
-        <strong>{session.firstUserMessage || session.nativeId}</strong>
-        <small title={session.cwd || "No working directory"}>{session.cwd || "No working directory"}</small>
+        <strong className="session-card-title" title={session.cwd || sessionIdentity(session)}>
+          <span><HighlightedText text={sessionIdentity(session)} query={query} /></span>
+          <small className={`session-card-provider provider-text provider-${session.provider}`}>{providerLabel(session.provider)}</small>
+        </strong>
+        <small className="session-card-preview" title={previewTitle}>
+          {matchingIdentifier && preview === matchingIdentifier && <span className="session-card-preview-label">Session ID</span>}
+          <HighlightedText text={preview} query={query} />
+        </small>
       </span>
       <span className="session-card-meta">
         <time>{formatRelativeDate(session.lastEventAt || session.startedAt)}</time>
@@ -871,12 +983,14 @@ function SessionRow({ session, selected, onSelect, compact = false }: {
 
 function SessionDetail({
   detail,
+  finderQuery,
   selectedTools,
   visibleCategories,
   onToggleTool,
   onSetTools,
   onToggleCategory,
   onSetCategoryGroupVisibility,
+  onInitializeCategoryVisibility,
   filterOpen,
   onFilterClose,
   onFilterToggle,
@@ -891,12 +1005,14 @@ function SessionDetail({
   onViewRaw
 }: {
   detail: SessionDetailResponse;
+  finderQuery: string;
   selectedTools: string[];
   visibleCategories: string[];
   onToggleTool: (tool: string) => void;
   onSetTools: (tools: string[]) => void;
   onToggleCategory: (category: string) => void;
   onSetCategoryGroupVisibility: (categories: readonly string[], visible: boolean) => void;
+  onInitializeCategoryVisibility: (categories: readonly string[]) => void;
   filterOpen: boolean;
   onFilterClose: () => void;
   onFilterToggle: () => void;
@@ -913,6 +1029,8 @@ function SessionDetail({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [pageInput, setPageInput] = useState("1");
+  const detailRef = useRef<HTMLDivElement>(null);
+  const detailHeaderRef = useRef<HTMLDivElement>(null);
   const resumeCommand = getResumeCommand(detail.session.provider, detail.session.nativeId);
   const copy = async (key: string, label: string, value: string) => {
     try {
@@ -936,9 +1054,10 @@ function SessionDetail({
   );
   const categoryCounts = detail.categoryCounts;
   const toolCounts = detail.toolCounts;
+  const additionalCategoryKey = additionalCategories.join("\0");
   useEffect(() => {
-    if (additionalCategories.length) onSetCategoryGroupVisibility(additionalCategories, true);
-  }, [detail.session.id]);
+    if (additionalCategories.length) onInitializeCategoryVisibility(additionalCategories);
+  }, [detail.session.id, additionalCategoryKey]);
   const visibleTurns = detail.turns;
   const renderedTurns = visibleTurns.map((turn, turnNumber) => ({ ...turn, turnNumber: turn.turnNumber || turnNumber + 1 }));
   const totalItems = detail.totalMatchingItems;
@@ -955,6 +1074,16 @@ function SessionDetail({
   );
   const sessionDuration = getSessionActiveDuration(detail.turns.flatMap((turn) => turn.items));
   useEffect(() => setPageInput(String(pageNumber)), [detail.session.id, pageNumber]);
+  useEffect(() => {
+    const detailElement = detailRef.current;
+    const headerElement = detailHeaderRef.current;
+    if (!detailElement || !headerElement) return;
+    const updateHeaderHeight = () => detailElement.style.setProperty("--detail-header-height", `${headerElement.offsetHeight}px`);
+    updateHeaderHeight();
+    const observer = new ResizeObserver(updateHeaderHeight);
+    observer.observe(headerElement);
+    return () => observer.disconnect();
+  }, [detail.session.id]);
   const goToPage = () => {
     const requested = Number(pageInput);
     if (!Number.isInteger(requested)) {
@@ -967,8 +1096,8 @@ function SessionDetail({
   };
 
   return (
-    <div className="session-detail">
-      <div className="detail-header">
+    <div ref={detailRef} className="session-detail">
+      <div ref={detailHeaderRef} className="detail-header">
         <div className="detail-heading-row">
           <div className="detail-toolbar-left">
             <button
@@ -1007,7 +1136,8 @@ function SessionDetail({
           </div>
         </div>
         <div className="detail-title">
-          <h2>{detail.session.firstUserMessage || detail.session.nativeId}</h2>
+          <h2><HighlightedText text={sessionIdentity(detail.session)} query={finderQuery} /></h2>
+          {detail.session.firstUserMessage && <p className="detail-prompt-preview"><HighlightedText text={detail.session.firstUserMessage} query={finderQuery} /></p>}
           <div className="session-meta-line">
             <span className={`provider-text provider-${detail.session.provider}`}>{providerLabel(detail.session.provider)}</span>
             <span>{formatDate(detail.session.startedAt)}</span>
@@ -1021,18 +1151,13 @@ function SessionDetail({
             {detail.session.archiveState === "archived" && <span>Archived</span>}
           </div>
           <div className="session-command-line">
-            <CopyValue label="Session ID" value={detail.session.nativeId} copied={copiedKey === "id"} onCopy={() => copy("id", "Session ID", detail.session.nativeId)} />
+            <CopyValue label="Session ID" value={detail.session.nativeId} highlightQuery={finderQuery} copied={copiedKey === "id"} onCopy={() => copy("id", "Session ID", detail.session.nativeId)} />
             {resumeCommand && <CopyValue label="Resume" value={resumeCommand} copied={copiedKey === "resume"} onCopy={() => copy("resume", "Resume command", resumeCommand)} />}
           </div>
         </div>
       </div>
 
       {detail.session.parseError && <pre className="parse-error">{detail.session.parseError}</pre>}
-      {detail.expandableRecordCount > 0 && (
-        <div className="source-notice">
-          {formatNumber(detail.expandableRecordCount)} matching {detail.expandableRecordCount === 1 ? "record has" : "records have"} a shortened preview to keep scrolling responsive. Every record is present; expand any preview to read its complete contents from the original session file.
-        </div>
-      )}
       <div className="turns">
         {visibleTurns.length === 0 ? (
           <div className="empty-state">No transcript items match the current filters</div>
@@ -1080,14 +1205,14 @@ function SessionDetail({
   );
 }
 
-function CopyValue({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
+function CopyValue({ label, value, highlightQuery = "", copied, onCopy }: { label: string; value: string; highlightQuery?: string; copied: boolean; onCopy: () => void }) {
   return (
     <div className="copy-value">
       <span>{label}</span>
       <button className={`inline-copy ${copied ? "copied" : ""}`} onClick={onCopy} title={`Copy ${label.toLowerCase()}`} aria-label={`Copy ${label.toLowerCase()}`}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
-      <code title={value}>{value}</code>
+      <code title={value}><HighlightedText text={value} query={highlightQuery} /></code>
       {copied && <small>Copied</small>}
     </div>
   );
@@ -1240,6 +1365,10 @@ function TranscriptItem({ item, provider, turnNumber, loadRaw, onViewRaw }: {
   const isLong = body.length > 1_500;
   const isMessage = item.role === "user" || item.role === "assistant";
   const isExpandableRecord = Boolean(item.contentPreview);
+  const expandedSections = useMemo(
+    () => expandedRaw == null ? [] : expandedRecordSections(provider, expandedRaw),
+    [provider, expandedRaw]
+  );
   const toggleExpansion = async () => {
     if (expandedRaw != null) {
       setExpandedRaw(null);
@@ -1264,15 +1393,22 @@ function TranscriptItem({ item, provider, turnNumber, loadRaw, onViewRaw }: {
         {item.role === "assistant" && item.phase && <span>{formatPhase(item.phase)}</span>}
         {item.role && item.toolName && <span>{item.toolName}</span>}
         {isExpandableRecord ? (
-          <button className="raw-action expand-record-action" onClick={() => void toggleExpansion()} disabled={expanding} aria-expanded={expandedRaw != null}>
-            {expandedRaw != null ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <span>{expanding ? "Loading…" : expandedRaw != null ? "Collapse" : "Expand"}</span>
-          </button>
+          <div className="record-actions">
+            <button className="raw-action expand-record-action" onClick={() => void toggleExpansion()} disabled={expanding} aria-expanded={expandedRaw != null}>
+              {expandedRaw != null ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <span>{expanding ? "Loading…" : expandedRaw != null ? "Collapse" : "Expand"}</span>
+            </button>
+            {expandedRaw != null && (
+              <button className="raw-action raw-text-action" onClick={() => onViewRaw(item, expandedRaw)} title="View raw JSON" aria-label="View raw JSON">Raw</button>
+            )}
+          </div>
         ) : (
           <button className="raw-action raw-text-action" onClick={() => onViewRaw(item)} title="View raw JSON" aria-label="View raw JSON">Raw</button>
         )}
       </div>
-      {body && (isLong && !isMessage ? (
+      {expandedRaw != null ? (
+        <ExpandedRecordContent sections={expandedSections} />
+      ) : body && (isLong && !isMessage ? (
         <details>
           <summary>{body.slice(0, 500)}...</summary>
           <pre>{body}</pre>
@@ -1283,26 +1419,17 @@ function TranscriptItem({ item, provider, turnNumber, loadRaw, onViewRaw }: {
         <pre>{body}</pre>
       ))}
       {expandError && <div className="inline-record-error">Could not expand this record: {expandError}</div>}
-      {expandedRaw != null && <ExpandedRecordView provider={provider} raw={expandedRaw} onViewRaw={() => onViewRaw(item, expandedRaw)} />}
     </article>
   );
 }
 
-function ExpandedRecordView({ provider, raw, onViewRaw }: {
-  provider: SessionSummary["provider"];
-  raw: string;
-  onViewRaw: () => void;
-}) {
-  const sections = useMemo(() => expandedRecordSections(provider, raw), [provider, raw]);
+function ExpandedRecordContent({ sections }: { sections: ReturnType<typeof expandedRecordSections> }) {
+  const showLabels = sections.length > 1;
   return (
-    <section className="inline-record-expansion">
-      <div className="inline-record-header">
-        <strong>Readable original record</strong>
-        <button type="button" onClick={onViewRaw}>View raw JSON</button>
-      </div>
+    <div className="expanded-record-content">
       {sections.map((section, index) => (
         <section className={`expanded-record-section kind-${section.kind}`} key={`${section.label}-${index}`}>
-          <strong>{section.label}</strong>
+          {showLabels && <strong>{section.label}</strong>}
           {section.kind === "message" ? (
             <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.text}</ReactMarkdown></div>
           ) : (
@@ -1310,7 +1437,7 @@ function ExpandedRecordView({ provider, raw, onViewRaw }: {
           )}
         </section>
       ))}
-    </section>
+    </div>
   );
 }
 
@@ -1394,6 +1521,32 @@ function projectName(path: string): string {
   if (path === "No working directory") return path;
   const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts.at(-1) || path;
+}
+
+function sessionIdentity(session: SessionSummary): string {
+  return session.cwd ? projectName(session.cwd) : `${providerLabel(session.provider)} session`;
+}
+
+function finderTerms(query: string): string[] {
+  return query.trim().split(/\s+/).map((term) => term.replace(/"/g, "").toLocaleLowerCase()).filter(Boolean).slice(0, 8);
+}
+
+function matchesFinderQuery(value: string, query: string): boolean {
+  const normalized = value.toLocaleLowerCase();
+  const terms = finderTerms(query);
+  return terms.length > 0 && terms.every((term) => normalized.includes(term));
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const terms = Array.from(new Set(finderTerms(query))).sort((left, right) => right.length - left.length);
+  if (!terms.length) return <>{text}</>;
+  const pattern = new RegExp(`(${terms.map(escapeRegex).join("|")})`, "gi");
+  const matches = new Set(terms);
+  return <>{text.split(pattern).map((part, index) => matches.has(part.toLocaleLowerCase()) ? <mark key={index}>{part}</mark> : part)}</>;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeProjectPath(path: string): string {

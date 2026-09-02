@@ -11,10 +11,12 @@ import { parseClaudeJsonlFile } from "../src/server/claude-parser.js";
 import { parseGeminiSessionFile, readGeminiJsonSourceRecord } from "../src/server/gemini-parser.js";
 import { parsePiSessionFile } from "../src/server/pi-parser.js";
 import { catalogSessionFile } from "../src/server/catalog.js";
-import { expandedRecordSections } from "../src/client/record-display.js";
-import { exportSession, resolveResumeDirectory, resumeCommand, resumeInvocation } from "../src/server/session-actions.js";
+import { expandedMessageText, expandedRecordSections } from "../src/client/record-display.js";
+import { exportSession, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../src/server/session-actions.js";
 import { LARGE_SOURCE_BYTES, SessionSourceReader } from "../src/server/source-reader.js";
 import { buildSourceLineIndex, readSourceLineAt } from "../src/server/source-lines.js";
+import { getTranscriptCategory, isTranscriptToolItem } from "../src/shared/transcript.js";
+import type { ConversationItem } from "../src/shared/types.js";
 
 const tempDirs: string[] = [];
 
@@ -99,6 +101,16 @@ describe("Codex JSONL parser and indexer", () => {
           }
         },
         {
+          timestamp: "2026-06-01T00:00:04.500Z",
+          type: "event_msg",
+          payload: { type: "agent_message", message: "Legacy Codex final response" }
+        },
+        {
+          timestamp: "2026-06-01T00:00:04.501Z",
+          type: "response_item",
+          payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Legacy Codex final response" }] }
+        },
+        {
           timestamp: "2026-06-01T00:00:05.000Z",
           type: "response_item",
           payload: {
@@ -117,6 +129,11 @@ describe("Codex JSONL parser and indexer", () => {
           timestamp: "2026-06-01T00:00:06.500Z",
           type: "event_msg",
           payload: { type: "token_count", info: { last_token_usage: { input_tokens: 12, output_tokens: 3, total_tokens: 15 } } }
+        },
+        {
+          timestamp: "2026-06-01T00:00:06.750Z",
+          type: "event_msg",
+          payload: { type: "agent_reasoning", message: "Reason through the fixture" }
         },
         {
           timestamp: "2026-06-01T00:00:07.000Z",
@@ -152,12 +169,16 @@ describe("Codex JSONL parser and indexer", () => {
     expect(parsed.lastAssistantMessage).toContain("Fixture assistant response");
     expect(parsed.items.find((item) => item.text === "Fixture progress update")?.phase).toBe("commentary");
     expect(parsed.items.find((item) => item.text === "Fixture assistant response")?.phase).toBe("final_answer");
+    expect(parsed.items.filter((item) => item.text === "Legacy Codex final response").map((item) => item.phase)).toEqual(["final_answer", "final_answer"]);
     expect(parsed.items.find((item) => item.text === "Fixture assistant response")?.model).toBe("gpt-test");
     expect(parsed.tools[0].toolName).toBe("shell_command");
     expect(parsed.tools[0].outputText).toContain("Directory listing output");
     expect(parsed.items.some((item) => item.envelopeType === "future_event")).toBe(true);
     expect(parsed.items.some((item) => item.envelopeType === "parse_error" && item.payloadType === "error")).toBe(true);
     expect(parsed.items.find((item) => item.payloadType === "token_count")?.usageJson).toContain('"total_tokens":15');
+    expect(getTranscriptCategory(parsed.items.find((item) => item.payloadType === "agent_reasoning") as ConversationItem)).toBe("reasoning");
+    expect(isTranscriptToolItem(parsed.items.find((item) => item.payloadType === "function_call") as ConversationItem, new Map())).toBe(true);
+    expect(isTranscriptToolItem(parsed.items.find((item) => item.payloadType === "function_call_output") as ConversationItem, new Map())).toBe(true);
     expect(parsed.items.some((item) => item.envelopeType === "item.completed" && item.payloadType === "command_execution")).toBe(true);
     expect(parsed.items.some((item) => item.envelopeType === "item/completed" && item.payloadType === "fileChange")).toBe(true);
     expect(parsed.searchText).toContain("npm test");
@@ -193,6 +214,28 @@ describe("Codex JSONL parser and indexer", () => {
       expect((await db.listSessions({ provider: "claude" }, indexer.getStatus())).sessions[0].nativeId).toBe("33333333-3333-4333-8333-333333333333");
       expect((await db.listSessions({ provider: "gemini" }, indexer.getStatus())).sessions[0].cwd).toBe("C:\\Projects\\gemini");
 
+      const partialDirectoryResults = await db.listSessions({ cwd: "PROJECTS\\FIXT" }, indexer.getStatus());
+      expect(partialDirectoryResults.total).toBe(1);
+      expect(partialDirectoryResults.sessions[0].cwd).toBe("C:\\Projects\\fixture");
+
+      const dateRangeResults = await db.listSessions({ from: "2026-06-01", to: "2026-06-01" }, indexer.getStatus());
+      expect(dateRangeResults.total).toBe(2);
+
+      const cleanResults = await db.listSessions({ hasErrors: "false" }, indexer.getStatus());
+      expect(cleanResults.total).toBe(4);
+      expect((await db.listSessions({ hasErrors: "true" }, indexer.getStatus())).total).toBe(0);
+
+      const combinedResults = await db.listSessions({
+        provider: "codex",
+        cwd: "fixture",
+        from: "2026-06-01",
+        to: "2026-06-01",
+        archived: "false",
+        hasErrors: "false"
+      }, indexer.getStatus());
+      expect(combinedResults.total).toBe(1);
+      expect(combinedResults.sessions[0].nativeId).toBe("11111111-1111-4111-8111-111111111111");
+
       const shellResults = await db.listSessions({ tool: "shell_command" }, indexer.getStatus());
       expect(shellResults.total).toBe(1);
       expect(shellResults.sessions[0].cwd).toBe("C:\\Projects\\fixture");
@@ -204,8 +247,12 @@ describe("Codex JSONL parser and indexer", () => {
       expect(archivedResults.total).toBe(1);
       expect(archivedResults.sessions[0].archiveState).toBe("archived");
 
-      const searchResults = await db.listSessions({ q: "fixture prompt" }, indexer.getStatus());
-      expect(searchResults.total).toBeGreaterThanOrEqual(1);
+      const searchResults = await db.listSessions({ q: "JSONL VIEWER" }, indexer.getStatus());
+      expect(searchResults.total).toBe(2);
+      expect((await db.listSessions({ q: "ARCHIVE" }, indexer.getStatus())).sessions[0].nativeId).toBe("22222222-2222-4222-8222-222222222222");
+      expect((await db.listSessions({ q: "11111111" }, indexer.getStatus())).sessions[0].nativeId).toBe("11111111-1111-4111-8111-111111111111");
+      expect((await db.listSessions({ q: "Fixture assistant response" }, indexer.getStatus())).total).toBe(0);
+      expect((await db.listSessions({ q: "shell_COMMAND OUTPUT" }, indexer.getStatus())).total).toBe(0);
 
       const [detail, concurrentDetail] = await Promise.all([
         reader.getDetail("11111111-1111-4111-8111-111111111111"),
@@ -289,10 +336,22 @@ describe("Codex JSONL parser and indexer", () => {
     expect(fs.statSync(dbPath).size).toBeLessThan(1_000_000);
   });
 
-  it("keeps resume arguments separate from the shell", () => {
+  it("validates resume identifiers before constructing a process invocation", () => {
     const hostileId = 'session\" & calc.exe & \"';
-    expect(resumeInvocation("codex", hostileId)).toEqual({ command: "codex", args: ["resume", hostileId] });
+    expect(() => resumeInvocation("codex", hostileId)).toThrow("unsafe session identifier");
     expect(() => resumeCommand("codex", hostileId)).toThrow("unsafe session identifier");
+  });
+
+  it("launches npm-installed provider shims through the Windows command processor", () => {
+    const commandProcessor = "C:\\Windows\\System32\\cmd.exe";
+    expect(resumeLaunchInvocation("codex", "codex-id", "win32", commandProcessor)).toEqual({
+      command: commandProcessor,
+      args: ["/d", "/s", "/c", "codex", "resume", "codex-id"]
+    });
+    expect(resumeLaunchInvocation("claude", "claude-id", "win32", commandProcessor).args).toEqual(["/d", "/s", "/c", "claude", "--resume", "claude-id"]);
+    expect(resumeLaunchInvocation("gemini", "gemini-id", "win32", commandProcessor).args).toEqual(["/d", "/s", "/c", "gemini", "--resume", "gemini-id"]);
+    expect(resumeLaunchInvocation("pi", "pi-id", "win32", commandProcessor).args).toEqual(["/d", "/s", "/c", "pi", "--session", "pi-id"]);
+    expect(resumeLaunchInvocation("codex", "codex-id", "linux")).toEqual({ command: "codex", args: ["resume", "codex-id"] });
   });
 
   it("refuses to resume without an available original working directory", () => {
@@ -578,6 +637,13 @@ describe("large source safeguards", () => {
     }));
     expect(gemini.map((section) => section.label)).toEqual(["User message", "Assistant message", "Plan"]);
     expect(gemini[1].text).toContain("complete-end");
+    expect(expandedMessageText("gemini", JSON.stringify({
+      sessionId: "legacy-gemini",
+      messages: [
+        { type: "user", content: "Readable Gemini prompt" },
+        { type: "gemini", content: completeText, thoughts: [{ subject: "Plan", description: "Readable Gemini reasoning" }] }
+      ]
+    }), "assistant")).toBe(completeText);
   });
 });
 

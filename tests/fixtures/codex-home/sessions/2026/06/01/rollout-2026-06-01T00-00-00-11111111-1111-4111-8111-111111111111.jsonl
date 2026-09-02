@@ -5,7 +5,7 @@
 {"timestamp":"2026-06-01T00:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","call_id":"call-shell","arguments":"{\"command\":\"Get-ChildItem\"}"}}
 {"timestamp":"2026-06-01T00:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-shell","output":"Directory listing output"}}
 {"timestamp":"2026-06-01T00:00:04.800Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Fixture progress update"}]}}
-{"timestamp":"2026-06-01T00:00:04.900Z","type":"event_msg","payload":{"type":"agent_message","turn_id":"turn-1","phase":"final_answer","message":"Fixture assistant response"}}
-{"timestamp":"2026-06-01T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Fixture assistant response"}]}}
+{"timestamp":"2026-06-01T00:00:04.900Z","type":"event_msg","payload":{"type":"agent_message","turn_id":"turn-1","message":"Fixture assistant response"}}
+{"timestamp":"2026-06-01T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Fixture assistant response"}]}}
 {"timestamp":"2026-06-01T00:00:06.000Z","type":"item.completed","item":{"id":"item-command","type":"command_execution","command":"npm test","status":"completed"}}
 {"method":"item/completed","params":{"threadId":"11111111-1111-4111-8111-111111111111","turnId":"turn-1","completedAtMs":1780272007000,"item":{"id":"item-file","type":"fileChange","summary":"Future file change summary"}}}

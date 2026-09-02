@@ -25,6 +25,12 @@ export function expandedRecordSections(provider: AgentProvider, raw: string): Ex
   return piSections(value);
 }
 
+export function expandedMessageText(provider: AgentProvider, raw: string, role: "user" | "assistant"): string | null {
+  const label = role === "user" ? "User message" : "Assistant message";
+  const messages = expandedRecordSections(provider, raw).filter((section) => section.kind === "message" && section.label === label);
+  return messages.length ? messages.map((section) => section.text).join("\n\n") : null;
+}
+
 function codexSections(envelope: JsonRecord): ExpandedRecordSection[] {
   const params = isRecord(envelope.params) ? envelope.params : {};
   const payload = isRecord(envelope.payload)

@@ -2,18 +2,28 @@ import fs from "node:fs";
 import type { AgentProvider, ConversationItem, ExportMode, SessionDetailResponse, SessionSummary } from "../shared/types.js";
 
 export function resumeCommand(provider: AgentProvider, nativeId: string): string {
-  if (!/^[a-z0-9][a-z0-9._:-]{0,255}$/i.test(nativeId)) {
-    throw new Error("Resume command unavailable for an unsafe session identifier");
-  }
   const invocation = resumeInvocation(provider, nativeId);
   return [invocation.command, ...invocation.args.map(quoteArg)].join(" ");
 }
 
 export function resumeInvocation(provider: AgentProvider, nativeId: string): { command: string; args: string[] } {
+  assertSafeSessionIdentifier(nativeId);
   if (provider === "claude") return { command: "claude", args: ["--resume", nativeId] };
   if (provider === "gemini") return { command: "gemini", args: ["--resume", nativeId] };
   if (provider === "pi") return { command: "pi", args: ["--session", nativeId] };
   return { command: "codex", args: ["resume", nativeId] };
+}
+
+export function resumeLaunchInvocation(
+  provider: AgentProvider,
+  nativeId: string,
+  platform: NodeJS.Platform = process.platform,
+  windowsCommandProcessor = process.env.ComSpec || process.env.COMSPEC || "cmd.exe"
+): { command: string; args: string[] } {
+  const invocation = resumeInvocation(provider, nativeId);
+  return platform === "win32"
+    ? { command: windowsCommandProcessor, args: ["/d", "/s", "/c", invocation.command, ...invocation.args] }
+    : invocation;
 }
 
 export function resolveResumeDirectory(recordedCwd: string | null | undefined): { cwd: string | null; error: string | null } {
@@ -216,6 +226,12 @@ function providerLabel(provider: AgentProvider): string {
 
 function quoteArg(value: string): string {
   return /[\s"']/u.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
+function assertSafeSessionIdentifier(nativeId: string): void {
+  if (!/^[a-z0-9][a-z0-9._:-]{0,255}$/i.test(nativeId)) {
+    throw new Error("Resume command unavailable for an unsafe session identifier");
+  }
 }
 
 function escapeHtml(value: string): string {

@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import type { ArchiveState, FacetsResponse, IndexStatus, ParseStatus, ResolveSessionResponse, SessionListResponse, SessionSummary } from "../shared/types.js";
 import type { ParsedSession } from "./parser.js";
@@ -111,7 +110,8 @@ export class ViewerDatabase {
     const queryTerms = normalizeSearchTerms(filters.q).map((term) => term.toLowerCase());
     const toolTerms = parseFilterList(filters.tool).map((term) => term.toLowerCase());
     const candidates = rows.map(rowToSessionSummary);
-    const matched = queryTerms.length || toolTerms.length ? await filterSourceFiles(candidates, queryTerms, toolTerms, signal) : candidates;
+    const found = queryTerms.length ? findSessions(candidates, queryTerms, filters.q || "") : candidates;
+    const matched = toolTerms.length ? await filterSourceFilesByTool(found, toolTerms, signal) : found;
     const limit = filters.limit === "all" ? matched.length : clamp(Number(filters.limit || 50), 1, 200);
     const offset = Math.max(0, Number(filters.offset || 0));
     return { sessions: matched.slice(offset, offset + limit), total: matched.length, status };
@@ -158,10 +158,10 @@ export class ViewerDatabase {
 
   private buildSessionWhere(filters: SessionFilters): { where: string; params: any[] } {
     const clauses: string[] = []; const params: any[] = [];
-    if (filters.cwd) { clauses.push("cwd = ?"); params.push(filters.cwd); }
+    if (filters.cwd) { clauses.push("INSTR(LOWER(cwd), LOWER(?)) > 0"); params.push(filters.cwd); }
     if (filters.provider) { clauses.push("provider = ?"); params.push(filters.provider); }
-    if (filters.from) { clauses.push("COALESCE(started_at, last_event_at) >= ?"); params.push(filters.from); }
-    if (filters.to) { clauses.push("COALESCE(last_event_at, started_at) <= ?"); params.push(filters.to); }
+    if (filters.from) { clauses.push("date(COALESCE(started_at, last_event_at)) >= date(?)"); params.push(filters.from); }
+    if (filters.to) { clauses.push("date(COALESCE(last_event_at, started_at)) <= date(?)"); params.push(filters.to); }
     if (filters.modelProvider) { clauses.push("model_provider = ?"); params.push(filters.modelProvider); }
     if (filters.originator) { clauses.push("originator = ?"); params.push(filters.originator); }
     if (filters.archived === "true") clauses.push("archive_state = 'archived'"); else if (filters.archived === "false") clauses.push("archive_state = 'active'");
@@ -170,86 +170,54 @@ export class ViewerDatabase {
   }
 }
 
-async function filterSourceFiles(sessions: SessionSummary[], queryTerms: string[], toolTerms: string[], signal?: AbortSignal): Promise<SessionSummary[]> {
-  let remaining = sessions;
-  for (const term of queryTerms) {
-    const alreadyMatched = new Set(remaining.filter((session) => sessionMetadata(session).includes(term)).map((session) => session.sourcePath));
-    const filesToScan = remaining.filter((session) => !alreadyMatched.has(session.sourcePath)).map((session) => session.sourcePath);
-    const fastMatches = await ripgrepMatches(filesToScan, term, signal);
-    if (fastMatches) {
-      remaining = remaining.filter((session) => alreadyMatched.has(session.sourcePath) || fastMatches.has(normalizePath(session.sourcePath)));
-      continue;
-    }
-    remaining = await filterSourceFilesWithNode(remaining, [term], [], signal);
-  }
-  return toolTerms.length ? filterSourceFilesWithNode(remaining, [], toolTerms, signal) : remaining;
+function findSessions(sessions: SessionSummary[], queryTerms: string[], rawQuery: string): SessionSummary[] {
+  const query = rawQuery.trim().toLowerCase();
+  return sessions
+    .map((session, index) => ({ session, index, score: sessionFinderScore(session, queryTerms, query) }))
+    .filter((entry) => entry.score != null)
+    .sort((left, right) => left.score! - right.score! || left.index - right.index)
+    .map((entry) => entry.session);
 }
 
-async function filterSourceFilesWithNode(sessions: SessionSummary[], queryTerms: string[], toolTerms: string[], signal?: AbortSignal): Promise<SessionSummary[]> {
+function sessionFinderScore(session: SessionSummary, queryTerms: string[], query: string): number | null {
+  const identity = sessionIdentity(session).toLowerCase();
+  const prompt = (session.firstUserMessage || "").toLowerCase();
+  const nativeId = session.nativeId.toLowerCase();
+  const internalId = session.id.toLowerCase();
+  const matchedField = [identity, prompt, nativeId, internalId].find((field) => queryTerms.every((term) => field.includes(term)));
+  if (matchedField == null) return null;
+  if (nativeId === query || internalId === query) return 0;
+  if (identity === query) return 1;
+  if (prompt === query) return 2;
+  if (identity.startsWith(query)) return 3;
+  if (prompt.startsWith(query)) return 4;
+  if (identity.includes(query)) return 5;
+  if (prompt.includes(query)) return 6;
+  if (nativeId.startsWith(query) || internalId.startsWith(query)) return 7;
+  return 8;
+}
+
+function sessionIdentity(session: SessionSummary): string {
+  if (session.cwd) {
+    const parts = session.cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
+    return parts.at(-1) || session.cwd;
+  }
+  const provider = session.provider === "claude" ? "Claude Code" : session.provider === "gemini" ? "Gemini CLI" : session.provider === "pi" ? "Pi" : "Codex";
+  return `${provider} session`;
+}
+
+async function filterSourceFilesByTool(sessions: SessionSummary[], toolTerms: string[], signal?: AbortSignal): Promise<SessionSummary[]> {
   const results = new Array<boolean>(sessions.length).fill(false); let next = 0;
   const workers = Array.from({ length: Math.min(3, sessions.length) }, async () => {
     while (next < sessions.length) {
       if (signal?.aborted) throw abortError();
       const index = next++; const session = sessions[index];
-      const metadata = sessionMetadata(session);
-      const missingQuery = queryTerms.filter((term) => !metadata.includes(term));
-      const metadataToolMatch = toolTerms.length === 0 || session.toolNames.some((name) => toolTerms.includes(name.toLowerCase()));
-      if (missingQuery.length === 0 && metadataToolMatch) { results[index] = true; continue; }
-      results[index] = await sourceContains(session.sourcePath, missingQuery, toolTerms, signal);
+      if (session.toolNames.some((name) => toolTerms.includes(name.toLowerCase()))) { results[index] = true; continue; }
+      results[index] = await sourceContains(session.sourcePath, [], toolTerms, signal);
     }
   });
   await Promise.all(workers);
   return sessions.filter((_session, index) => results[index]);
-}
-
-async function ripgrepMatches(files: string[], term: string, signal?: AbortSignal): Promise<Set<string> | null> {
-  if (files.length === 0) return new Set();
-  const chunks: string[][] = [];
-  for (let index = 0; index < files.length; index += 40) chunks.push(files.slice(index, index + 40));
-  const matches = new Set<string>();
-  let next = 0;
-  let unavailable = false;
-  const workers = Array.from({ length: Math.min(3, chunks.length) }, async () => {
-    while (next < chunks.length && !unavailable) {
-      const chunk = chunks[next++];
-      const result = await runRipgrep(chunk, term, signal);
-      if (result == null) { unavailable = true; return; }
-      for (const file of result) matches.add(normalizePath(file));
-    }
-  });
-  await Promise.all(workers);
-  return unavailable ? null : matches;
-}
-
-function runRipgrep(files: string[], term: string, signal?: AbortSignal): Promise<string[] | null> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(abortError()); return; }
-    const child = spawn("rg", ["-l", "-i", "-F", "--no-messages", "--", term, ...files], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
-    let output = "";
-    const abort = () => child.kill();
-    signal?.addEventListener("abort", abort, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { output += chunk; });
-    child.once("error", (error) => {
-      signal?.removeEventListener("abort", abort);
-      if (signal?.aborted) reject(abortError()); else if ((error as NodeJS.ErrnoException).code === "ENOENT") resolve(null); else resolve(null);
-    });
-    child.once("exit", (code) => {
-      signal?.removeEventListener("abort", abort);
-      if (signal?.aborted) { reject(abortError()); return; }
-      if (code !== 0 && code !== 1) { resolve(null); return; }
-      resolve(output.split(/\r?\n/).filter(Boolean));
-    });
-  });
-}
-
-function sessionMetadata(session: SessionSummary): string {
-  return [session.id, session.nativeId, session.cwd, session.firstUserMessage, session.lastAssistantMessage, session.provider]
-    .filter(Boolean).join("\n").toLowerCase();
-}
-
-function normalizePath(value: string): string {
-  return path.resolve(value).toLowerCase();
 }
 
 async function sourceContains(sourcePath: string, requiredTerms: string[], anyToolTerms: string[], signal?: AbortSignal): Promise<boolean> {

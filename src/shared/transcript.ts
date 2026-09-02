@@ -19,6 +19,7 @@ const TOOL_OUTPUT_TYPES = new Set([
 const PAYLOAD_CATEGORY_ALIASES: Record<string, string> = {
   agent_message: "assistant",
   agentMessage: "assistant",
+  agent_reasoning: "reasoning",
   command_execution: "commandExecution",
   commandExecution: "commandExecution",
   context_compaction: "contextCompaction",
@@ -78,13 +79,17 @@ export function isVisibleTranscriptItem(
   callToolMap: ReadonlyMap<string, string>,
   knownCategories: readonly string[] = visibleCategories
 ): boolean {
-  const effectiveToolName = getEffectiveToolName(item, callToolMap);
-  const isToolItem =
-    Boolean(effectiveToolName) ||
-    (item.payloadType != null && (TOOL_CALL_TYPES.has(item.payloadType) || TOOL_OUTPUT_TYPES.has(item.payloadType)));
-  if (!isToolItem) return visibleCategories.includes(getTranscriptCategory(item, knownCategories));
+  if (!isTranscriptToolItem(item, callToolMap)) {
+    return visibleCategories.includes(getTranscriptCategory(item, knownCategories));
+  }
   if (selectedTools.length === 0) return false;
+  const effectiveToolName = getEffectiveToolName(item, callToolMap);
   return effectiveToolName != null && selectedTools.includes(effectiveToolName);
+}
+
+export function isTranscriptToolItem(item: ConversationItem, callToolMap: ReadonlyMap<string, string>): boolean {
+  return Boolean(getEffectiveToolName(item, callToolMap))
+    || (item.payloadType != null && (TOOL_CALL_TYPES.has(item.payloadType) || TOOL_OUTPUT_TYPES.has(item.payloadType)));
 }
 
 export function getEffectiveToolName(item: ConversationItem, callToolMap: ReadonlyMap<string, string>): string | null {

@@ -1,19 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { AgentProvider, ConversationItem, ExportMode, SessionDetailResponse, SessionSummary } from "../shared/types.js";
 import { resolveAppConfig } from "../server/config.js";
 import { ViewerDatabase } from "../server/database.js";
 import { SessionIndexer } from "../server/indexer.js";
-import { conversationItems, exportFileName, resolveResumeDirectory, resumeCommand, resumeInvocation } from "../server/session-actions.js";
+import { conversationItems, exportFileName, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../server/session-actions.js";
 import { SessionSourceReader } from "../server/source-reader.js";
-import { expandedRecordSections } from "../client/record-display.js";
+import { expandedMessageText } from "../client/record-display.js";
+import { availableTuiBodyRows, sanitizeTuiText, tuiFrameLayout, tuiPageStep, tuiWidthLayout, visibleTuiView, wrapTuiSegments, wrapTuiSourceText, wrapTuiText, type TuiView } from "./layout.js";
 
 const ESC = "\x1b";
 const colors = {
   reset: `${ESC}[0m`, bold: `${ESC}[1m`, dim: `${ESC}[2m`, inverse: `${ESC}[7m`,
-  green: `${ESC}[38;5;42m`, blue: `${ESC}[38;5;75m`, amber: `${ESC}[38;5;214m`, magenta: `${ESC}[38;5;176m`, gray: `${ESC}[38;5;245m`
+  green: `${ESC}[38;5;42m`, blue: `${ESC}[38;5;75m`, amber: `${ESC}[38;5;214m`, magenta: `${ESC}[38;5;176m`, gray: `${ESC}[38;5;245m`, white: `${ESC}[38;5;255m`
 };
 
 interface CliOptions {
@@ -53,21 +54,21 @@ async function main(): Promise<void> {
       await printPlain(database, options);
       return;
     }
-    await runInteractive(database, reader, config.dbPath, options);
+    await runInteractive(database, reader, options);
   } finally {
     database.close();
   }
 }
 
-async function runInteractive(database: ViewerDatabase, reader: SessionSourceReader, dbPath: string, options: CliOptions): Promise<void> {
-  let query = options.query;
+async function runInteractive(database: ViewerDatabase, reader: SessionSourceReader, options: CliOptions): Promise<void> {
+  let sessionQuery = options.query;
+  let transcriptQuery = "";
   let provider = options.provider;
-  let filterCandidates = true;
   let selected = 0;
   let activePane: "sessions" | "transcript" = "sessions";
+  let view: TuiView = "both";
   let previewItem = 0;
   let previewLine = 0;
-  let mode: ExportMode = options.mode;
   let notice = "";
   let busy = "";
   let sessions: SessionSummary[] = [];
@@ -76,30 +77,61 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
   let searchAbort: AbortController | null = null;
   let debounce: NodeJS.Timeout | null = null;
   let generation = 0;
+  let visibleBodyRows = 1;
   const providers: Array<AgentProvider | ""> = ["", "codex", "claude", "gemini", "pi"];
   let initialSessionId = options.resolve ? database.resolveSession(options.resolve).session?.id || null : null;
 
   const refreshPreviewItems = (reset = false) => {
-    previewItems = detail ? getPreviewItems(detail, mode, filterCandidates ? "" : query) : [];
+    previewItems = detail ? getPreviewItems(detail, transcriptQuery) : [];
     if (reset) { previewItem = 0; previewLine = 0; }
     previewItem = Math.max(0, Math.min(previewItem, Math.max(0, previewItems.length - 1)));
   };
 
   const render = () => {
-    const width = Math.max(72, process.stdout.columns || 120);
-    const height = Math.max(18, process.stdout.rows || 32);
-    const leftWidth = Math.max(30, Math.min(52, Math.floor(width * 0.4)));
-    const rightWidth = width - leftWidth - 3;
-    const header = `${colors.bold}${colors.green}Agent Session Browser${colors.reset}  ${filterCandidates ? "FILTER" : "PREVIEW SEARCH"}  ` +
-      `${provider ? provider.toUpperCase() : "ALL AGENTS"}  ${sessions.length} sessions  ${activePane.toUpperCase()}`;
-    const queryLine = `${colors.gray}>${colors.reset} ${query || `${colors.dim}type to search original session files${colors.reset}`}`;
-    const listRows = renderList(sessions, selected, leftWidth, height - 5, activePane === "sessions");
-    const previewRows = renderPreview(detail, previewItems, filterCandidates ? "" : query, rightWidth, height - 5, mode, previewItem, previewLine);
+    const widthLayout = tuiWidthLayout(process.stdout.columns);
+    const width = widthLayout.width;
+    const layout = tuiFrameLayout(process.stdout.rows);
+    const visibleView = visibleTuiView(view, widthLayout.twoPane, activePane);
+    const activeQuery = activePane === "sessions" ? sessionQuery : transcriptQuery;
+    const settingsText = [
+      ["provider", provider || "all"],
+      ["sessions", String(sessions.length)],
+      ["view", visibleView === "sessions" ? "session" : visibleView]
+    ].map(([label, value]) => `${colors.bold}${colors.white}${label}${colors.reset} ${colors.gray}${value}${colors.reset}`).join("   ");
+    const settingsWidth = Math.min(stripAnsi(settingsText).length, Math.max(0, width - 4));
+    const topGap = settingsWidth ? Math.min(2, Math.max(0, width - settingsWidth - 1)) : 0;
+    const searchWidth = Math.max(1, width - settingsWidth - topGap);
+    const search = `${colors.gray}>${colors.reset} ${activeQuery || `${colors.dim}${activePane === "sessions" ? "find by first prompt or session ID" : "search this transcript"}${colors.reset}`}`;
+    const topBar = `${padAnsi(search, searchWidth)}${" ".repeat(topGap)}${truncateAnsi(settingsText, settingsWidth)}`;
+    const topDivider = `${colors.white}${"─".repeat(width)}${colors.reset}`;
+    const shortcutEntries = [
+      ["←/→", "focus"], ["↑/↓", "scroll"], ["pgup/pgdn", "jump page"],
+      ["tab", "provider"], ["ctrl+l", "view"], ["enter", "resume"], ["esc", "quit"]
+    ].map(([key, action]) => `${colors.bold}${colors.white}${key}${colors.reset} ${colors.gray}${action}${colors.reset}`);
+    const status = busy ? `${colors.amber}${sanitizeTuiText(busy)}${colors.reset}` : notice ? `${colors.amber}${sanitizeTuiText(notice)}${colors.reset}` : "";
+    const shortcutLines = layout.showShortcuts ? wrapTuiSegments(shortcutEntries, width) : [];
+    const shortcutDivider = shortcutLines.length ? `${colors.white}${"─".repeat(width)}${colors.reset}` : "";
+    const statusLines = layout.showStatus && stripAnsi(status) ? wrapTuiText(status, width) : [];
+    const fixedRows = 2 + Number(Boolean(shortcutDivider)) + shortcutLines.length + statusLines.length;
+    const bodyRows = availableTuiBodyRows(process.stdout.rows, fixedRows);
+    visibleBodyRows = bodyRows;
     const body: string[] = [];
-    for (let index = 0; index < height - 5; index += 1) body.push(`${padAnsi(listRows[index] || "", leftWidth)} ${colors.gray}|${colors.reset} ${padAnsi(previewRows[index] || "", rightWidth)}`);
-    const shortcuts = `${colors.dim}Left/Right pane  Up/Down scroll  PgUp/PgDn page  type search  Ctrl+S filter/preview  Tab provider  F2 view  Ctrl+O expand  Ctrl+E export  Enter resume  Esc quit${colors.reset}`;
-    const status = busy ? `${colors.amber}${busy}${colors.reset}` : notice ? `${colors.amber}${notice}${colors.reset}` : `${colors.dim}${detail?.session.sourcePath || ""}${colors.reset}`;
-    process.stdout.write(`${ESC}[H${ESC}[2J${header}\n${queryLine}\n${body.join("\n")}\n${shortcuts}\n${truncateAnsi(status, width)}`);
+    if (visibleView === "both") {
+      const leftWidth = Math.max(1, Math.min(52, Math.max(30, Math.floor(width * 0.4)), Math.max(1, width - 4)));
+      const rightWidth = Math.max(1, width - leftWidth - 3);
+      const listRows = renderList(sessions, selected, leftWidth, bodyRows, activePane === "sessions", sessionQuery);
+      const previewRows = renderPreview(detail, previewItems, transcriptQuery, rightWidth, bodyRows, previewItem, previewLine);
+      for (let index = 0; index < bodyRows; index += 1) body.push(`${padAnsi(listRows[index] || "", leftWidth)} ${colors.gray}|${colors.reset} ${padAnsi(previewRows[index] || "", rightWidth)}`);
+    } else if (visibleView === "sessions") {
+      body.push(...renderList(sessions, selected, width, bodyRows, true, sessionQuery));
+    } else {
+      body.push(...renderPreview(detail, previewItems, transcriptQuery, width, bodyRows, previewItem, previewLine));
+    }
+    const frame = [topBar, topDivider];
+    frame.push(...body);
+    if (shortcutDivider) frame.push(shortcutDivider);
+    frame.push(...shortcutLines, ...statusLines);
+    process.stdout.write(`${ESC}[H${ESC}[2J${frame.map((line) => truncateAnsi(line, width)).join("\n")}`);
   };
 
   const loadDetail = async () => {
@@ -126,10 +158,10 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
     const abort = new AbortController();
     searchAbort = abort;
     const current = ++generation;
-    busy = filterCandidates && query ? "Searching original session files..." : "Loading session catalog...";
+    busy = sessionQuery ? "Finding sessions..." : "Loading session catalog...";
     render();
     try {
-      const response = await database.listSessions({ q: filterCandidates ? query : "", provider, limit: "all" }, emptyStatus(), abort.signal);
+      const response = await database.listSessions({ q: sessionQuery, provider, limit: "all" }, emptyStatus(), abort.signal);
       if (abort.signal.aborted || current !== generation) return;
       sessions = response.sessions;
       if (initialSessionId) {
@@ -147,14 +179,9 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
     }
   };
 
-  const scheduleSessionLoad = () => {
-    if (!filterCandidates) {
-      refreshPreviewItems(true);
-      render();
-      return;
-    }
+  const scheduleSessionLoad = (delay = sessionQuery ? 400 : 0) => {
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => void loadSessions(), query && filterCandidates ? 400 : 0);
+    debounce = setTimeout(() => void loadSessions(), delay);
   };
 
   process.stdout.write(`${ESC}[?1049h${ESC}[?25l`);
@@ -179,29 +206,35 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
     process.stdin.on("keypress", (value, key: readline.Key) => {
       notice = "";
       if ((key.ctrl && key.name === "c") || key.name === "escape") return close();
-      if (key.ctrl && key.name === "s") { filterCandidates = !filterCandidates; scheduleSessionLoad(); }
-      else if (key.name === "left") activePane = "sessions";
-      else if (key.name === "right") activePane = "transcript";
+      if (key.name === "left") { activePane = "sessions"; if (view !== "both") view = "sessions"; }
+      else if (key.name === "right") { activePane = "transcript"; if (view !== "both") view = "transcript"; }
       else if (key.name === "up" && activePane === "sessions") { selected = Math.max(0, selected - 1); void loadDetail(); }
       else if (key.name === "down" && activePane === "sessions") { selected = Math.min(sessions.length - 1, selected + 1); void loadDetail(); }
-      else if (key.name === "pageup" && activePane === "sessions") { selected = Math.max(0, selected - 10); void loadDetail(); }
-      else if (key.name === "pagedown" && activePane === "sessions") { selected = Math.min(sessions.length - 1, selected + 10); void loadDetail(); }
+      else if (key.name === "pageup" && activePane === "sessions") { selected = Math.max(0, selected - tuiPageStep(visibleBodyRows, "sessions")); void loadDetail(); }
+      else if (key.name === "pagedown" && activePane === "sessions") { selected = Math.min(sessions.length - 1, selected + tuiPageStep(visibleBodyRows, "sessions")); void loadDetail(); }
       else if (key.name === "up" && activePane === "transcript") movePreviewCursor(previewItems, -1, currentPreviewWidth());
       else if (key.name === "down" && activePane === "transcript") movePreviewCursor(previewItems, 1, currentPreviewWidth());
-      else if (key.name === "pageup" && activePane === "transcript") movePreviewCursor(previewItems, -Math.max(1, (process.stdout.rows || 32) - 9), currentPreviewWidth());
-      else if (key.name === "pagedown" && activePane === "transcript") movePreviewCursor(previewItems, Math.max(1, (process.stdout.rows || 32) - 9), currentPreviewWidth());
-      else if (key.name === "backspace") { query = query.slice(0, -1); scheduleSessionLoad(); }
-      else if (key.name === "tab") { provider = providers[(providers.indexOf(provider) + 1) % providers.length]; scheduleSessionLoad(); }
-      else if (key.name === "f2") { mode = mode === "conversation" ? "readable" : mode === "readable" ? "trace" : "conversation"; refreshPreviewItems(true); }
+      else if (key.name === "pageup" && activePane === "transcript") movePreviewCursor(previewItems, -tuiPageStep(visibleBodyRows, "transcript"), currentPreviewWidth());
+      else if (key.name === "pagedown" && activePane === "transcript") movePreviewCursor(previewItems, tuiPageStep(visibleBodyRows, "transcript"), currentPreviewWidth());
+      else if (key.name === "backspace" && activePane === "sessions") { sessionQuery = sessionQuery.slice(0, -1); scheduleSessionLoad(); }
+      else if (key.name === "backspace") { transcriptQuery = transcriptQuery.slice(0, -1); refreshPreviewItems(true); }
+      else if (key.name === "tab") { provider = providers[(providers.indexOf(provider) + 1) % providers.length]; scheduleSessionLoad(0); }
+      else if (key.ctrl && key.name === "l") {
+        view = view === "both" ? "sessions" : view === "sessions" ? "transcript" : "both";
+        if (view !== "both") activePane = view;
+      }
       else if (key.ctrl && key.name === "o" && detail && previewItems[previewItem]?.contentPreview) {
         const item = previewItems[previewItem];
         const sessionId = detail.session.id;
         const sessionProvider = detail.session.provider;
-        busy = "Expanding the complete original record..."; render();
+        busy = "Loading the complete message..."; render();
         void reader.getRawItem(sessionId, item.id)
           .then((raw) => {
             if (raw == null) throw new Error("Original source record is unavailable.");
-            item.text = expandedRecordSections(sessionProvider, raw).map((section) => `${section.label}\n${section.text}`).join("\n\n");
+            if (item.role !== "user" && item.role !== "assistant") throw new Error("Only user and assistant messages can be expanded here.");
+            const message = expandedMessageText(sessionProvider, raw, item.role);
+            if (!message) throw new Error("The complete message is unavailable in the original record.");
+            item.text = message;
             item.summary = null;
             item.contentPreview = false;
             previewLine = 0;
@@ -212,40 +245,55 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
       }
       else if (key.ctrl && key.name === "r" && detail) {
         try { notice = resumeCommand(detail.session.provider, detail.session.nativeId); } catch (error) { notice = (error as Error).message; }
-      } else if (key.ctrl && key.name === "e" && detail) {
-        busy = "Exporting from original session file..."; render();
-        void writeExport(dbPath, reader, detail, "html", mode)
-          .then((output) => { busy = ""; notice = `Exported ${output}`; render(); })
-          .catch((error) => { busy = ""; notice = (error as Error).message; render(); });
       } else if (key.name === "return" && detail) {
         const directory = resolveResumeDirectory(detail.session.cwd);
         if (directory.error || !directory.cwd) { notice = directory.error || "Cannot resume without an original working directory."; render(); return; }
-        const invocation = resumeInvocation(detail.session.provider, detail.session.nativeId);
+        let invocation: ReturnType<typeof resumeLaunchInvocation>;
+        try {
+          const providerInvocation = resumeInvocation(detail.session.provider, detail.session.nativeId);
+          if (process.platform === "win32" && spawnSync("where.exe", [providerInvocation.command], { stdio: "ignore", windowsHide: true }).status !== 0) {
+            notice = `Cannot resume: ${providerLabel(detail.session.provider)} command "${providerInvocation.command}" is not available on PATH.`;
+            render();
+            return;
+          }
+          invocation = resumeLaunchInvocation(detail.session.provider, detail.session.nativeId);
+        } catch (error) {
+          notice = (error as Error).message;
+          render();
+          return;
+        }
         close();
         const child = spawn(invocation.command, invocation.args, { cwd: directory.cwd, shell: false, stdio: "inherit" });
         child.on("error", (error) => process.stderr.write(`Unable to resume session: ${error.message}\n`));
         return;
-      } else if (!key.ctrl && !key.meta && value && value >= " " && value !== "\x7f") { query += value; scheduleSessionLoad(); }
+      } else if (!key.ctrl && !key.meta && value && value >= " " && value !== "\x7f" && activePane === "sessions") {
+        sessionQuery += value;
+        scheduleSessionLoad();
+      } else if (!key.ctrl && !key.meta && value && value >= " " && value !== "\x7f") {
+        transcriptQuery += value;
+        refreshPreviewItems(true);
+      }
       render();
 
       function currentPreviewWidth(): number {
-        const width = Math.max(72, process.stdout.columns || 120);
-        const leftWidth = Math.max(30, Math.min(52, Math.floor(width * 0.4)));
-        return width - leftWidth - 3;
+        const widthLayout = tuiWidthLayout(process.stdout.columns);
+        if (visibleTuiView(view, widthLayout.twoPane, activePane) !== "both") return widthLayout.width;
+        const leftWidth = Math.max(1, Math.min(52, Math.max(30, Math.floor(widthLayout.width * 0.4)), Math.max(1, widthLayout.width - 4)));
+        return Math.max(1, widthLayout.width - leftWidth - 3);
       }
 
       function movePreviewCursor(items: ConversationItem[], delta: number, width: number): void {
         const direction = Math.sign(delta);
         for (let step = 0; step < Math.abs(delta) && items.length; step += 1) {
           if (direction > 0) {
-            const lines = Math.max(1, wrap(itemBody(items[previewItem]), width).length);
+            const lines = Math.max(1, wrapTuiSourceText(itemBody(items[previewItem]), width).length);
             if (previewLine + 1 < lines) previewLine += 1;
             else if (previewItem + 1 < items.length) { previewItem += 1; previewLine = 0; }
           } else if (previewLine > 0) {
             previewLine -= 1;
           } else if (previewItem > 0) {
             previewItem -= 1;
-            previewLine = Math.max(0, wrap(itemBody(items[previewItem]), width).length - 1);
+            previewLine = Math.max(0, wrapTuiSourceText(itemBody(items[previewItem]), width).length - 1);
           }
         }
       }
@@ -253,42 +301,48 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
   });
 }
 
-function renderList(sessions: SessionSummary[], selected: number, width: number, rows: number, focused: boolean): string[] {
+function renderList(sessions: SessionSummary[], selected: number, width: number, rows: number, focused: boolean, query: string): string[] {
+  if (rows <= 0) return [];
   if (!sessions.length) return [`${colors.dim}No sessions match${colors.reset}`];
   const start = Math.max(0, Math.min(selected - Math.floor(rows / 2), Math.max(0, sessions.length - rows)));
   return sessions.slice(start, start + rows).map((session, offset) => {
     const active = start + offset === selected;
     const provider = providerColor(session.provider, session.provider.padEnd(6));
     const date = compactDate(session.lastEventAt || session.startedAt);
-    const title = truncate(session.firstUserMessage || session.nativeId, Math.max(8, width - 20));
+    const title = highlight(truncate(compactWhitespace(sanitizeTuiText(sessionFinderPreview(session, query))), Math.max(8, width - 20)), query);
     const line = `${active ? ">" : " "} ${provider} ${colors.gray}${date}${colors.reset} ${title}`;
     return active && focused ? `${colors.inverse}${stripAnsi(line)}${colors.reset}` : line;
   });
 }
 
-function renderPreview(detail: SessionDetailResponse | null, items: ConversationItem[], query: string, width: number, rows: number, mode: ExportMode, itemOffset: number, lineOffset: number): string[] {
+function renderPreview(detail: SessionDetailResponse | null, items: ConversationItem[], query: string, width: number, rows: number, itemOffset: number, lineOffset: number): string[] {
+  if (rows <= 0) return [];
   if (!detail) return [`${colors.dim}Select a session${colors.reset}`];
   const session = detail.session;
+  const provider = providerLabel(session.provider);
+  const directoryWidth = Math.max(0, width - provider.length - 1);
+  const directory = directoryWidth ? truncate(compactWhitespace(sanitizeTuiText(sessionIdentity(session))), directoryWidth) : "";
+  const headerGap = directory ? " ".repeat(Math.max(1, width - provider.length - directory.length)) : "";
   const output = [
-    `${colors.bold}${providerColor(session.provider, providerLabel(session.provider))}${colors.reset}  ${colors.gray}${mode}${colors.reset}`,
-    `${colors.bold}${truncate(session.firstUserMessage || session.nativeId, width)}${colors.reset}`,
-    `${colors.dim}${truncate(session.cwd || "Unknown workspace", width)}${colors.reset}`,
-    `${colors.gray}${items.length ? `Item ${itemOffset + 1}/${items.length}${lineOffset ? `, wrapped line ${lineOffset + 1}` : ""}` : "No matching transcript items"}${colors.reset}`
+    `${colors.bold}${providerColor(session.provider, provider)}${colors.reset}${headerGap}${colors.bold}${directory}${colors.reset}`,
+    `${colors.dim}${truncate(compactWhitespace(sanitizeTuiText(session.firstUserMessage || "No user prompt recorded")), width)}${colors.reset}`
   ];
+  if (!items.length) output.push(`${colors.gray}No matching transcript items${colors.reset}`);
   for (let index = itemOffset; index < items.length && output.length < rows; index += 1) {
     const item = items[index];
     const color = item.role === "user" ? colors.blue : item.role === "assistant" ? colors.green : colors.amber;
-    output.push(`${color}${colors.bold}${itemLabel(item)}${index === itemOffset && lineOffset ? " (continued)" : ""}${colors.reset} ${colors.dim}${compactTime(item.timestamp)}${item.contentPreview ? "  preview; Ctrl+O expands" : ""}${colors.reset}`);
+    const previewHint = item.contentPreview ? index === itemOffset ? "  shortened; Ctrl+O full message" : "  shortened" : "";
+    output.push(`${color}${colors.bold}${compactWhitespace(sanitizeTuiText(itemLabel(item)))}${index === itemOffset && lineOffset ? " (continued)" : ""}${colors.reset} ${colors.dim}${compactTime(item.timestamp)}${previewHint}${colors.reset}`);
     const remaining = Math.max(0, rows - output.length);
-    const wrapped = wrap(itemBody(item), width).slice(index === itemOffset ? lineOffset : 0, (index === itemOffset ? lineOffset : 0) + remaining);
+    const wrapped = wrapTuiSourceText(itemBody(item), width).slice(index === itemOffset ? lineOffset : 0, (index === itemOffset ? lineOffset : 0) + remaining);
     output.push(...wrapped.map((line) => highlight(line, query)));
     if (output.length < rows) output.push("");
   }
   return output.slice(0, rows);
 }
 
-function getPreviewItems(detail: SessionDetailResponse, mode: ExportMode, query: string): ConversationItem[] {
-  let items = mode === "conversation" ? conversationItems(detail) : detail.turns.flatMap((turn) => turn.items).filter((item) => mode === "trace" || item.role === "user" || item.role === "assistant" || item.payloadType === "reasoning" || item.toolName);
+function getPreviewItems(detail: SessionDetailResponse, query: string): ConversationItem[] {
+  let items = conversationItems(detail);
   if (query) items = items.filter((item) => itemBody(item).toLowerCase().includes(query.toLowerCase()));
   return items;
 }
@@ -342,7 +396,7 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 function usage(): string {
-  return `Agent Session Browser TUI\n\nUsage:\n  asb [tui] [--query text] [--provider codex|claude|gemini|pi]\n  asb [tui] --session <id-or-path> --print-resume\n  asb [tui] --session <id-or-path> --export md|html [--mode conversation|readable|trace]\n\nOptions:\n  -q, --query <text>       Search session files\n  --provider <provider>    Restrict the session list\n  --session <id-or-path>   Open, resume, or export one session\n  --print-resume           Print its native resume command\n  --export <md|html>       Export without opening the TUI\n  --mode <mode>            conversation, readable, or trace\n  -h, --help               Show this help\n`;
+  return `Agent Session Browser TUI\n\nUsage:\n  asb [tui] [--query text] [--provider codex|claude|gemini|pi]\n  asb [tui] --session <id-or-path> --print-resume\n  asb [tui] --session <id-or-path> --export md|html [--mode conversation|readable|trace]\n\nOptions:\n  -q, --query <text>       Find sessions by first prompt or ID\n  --provider <provider>    Restrict the session list\n  --session <id-or-path>   Open, resume, or export one session\n  --print-resume           Print its native resume command\n  --export <md|html>       Export without opening the TUI\n  --mode <mode>            conversation, readable, or trace\n  -h, --help               Show this help\n`;
 }
 
 function nextAvailablePath(directory: string, filename: string): string {
@@ -360,13 +414,46 @@ function itemLabel(item: ConversationItem): string { if (item.role === "user") r
 function compactDate(value: string | null): string { if (!value) return "----------"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value.slice(0, 10) : date.toISOString().slice(0, 10); }
 function compactTime(value: string | null): string { if (!value) return ""; const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 function compactWhitespace(value: string): string { return value.replace(/\s+/g, " ").trim(); }
+function sessionIdentity(session: SessionSummary): string {
+  if (!session.cwd) return `${providerLabel(session.provider)} session`;
+  const parts = session.cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts.at(-1) || session.cwd;
+}
+function finderTerms(query: string): string[] { return query.trim().split(/\s+/).map((term) => term.replace(/"/g, "").toLowerCase()).filter(Boolean).slice(0, 8); }
+function matchesFinderQuery(value: string, query: string): boolean { const normalized = value.toLowerCase(); const terms = finderTerms(query); return terms.length > 0 && terms.every((term) => normalized.includes(term)); }
+function sessionFinderPreview(session: SessionSummary, query: string): string {
+  const prompt = session.firstUserMessage || "No user prompt recorded";
+  const identity = sessionIdentity(session);
+  if (!query) return prompt;
+  if (matchesFinderQuery(identity, query)) return identity;
+  if (matchesFinderQuery(prompt, query)) return prompt;
+  return [session.nativeId, session.id].find((identifier) => matchesFinderQuery(identifier, query)) || prompt;
+}
 function truncate(value: string, width: number): string { return value.length <= width ? value : `${value.slice(0, Math.max(1, width - 3))}...`; }
 function stripAnsi(value: string): string { return value.replace(/\x1b\[[0-9;]*m/g, ""); }
-function truncateAnsi(value: string, width: number): string { return truncate(stripAnsi(value), width); }
+function truncateAnsi(value: string, width: number): string {
+  if (width <= 0) return "";
+  let output = "";
+  let visible = 0;
+  for (let index = 0; index < value.length && visible < width;) {
+    if (value[index] === ESC) {
+      const sequence = value.slice(index).match(/^\x1b\[[0-9;]*m/)?.[0];
+      if (sequence) { output += sequence; index += sequence.length; continue; }
+    }
+    const character = String.fromCodePoint(value.codePointAt(index)!);
+    output += character;
+    index += character.length;
+    visible += 1;
+  }
+  return value.includes(ESC) ? `${output}${colors.reset}` : output;
+}
 function padAnsi(value: string, width: number): string { const length = stripAnsi(value).length; return length >= width ? truncateAnsi(value, width) : value + " ".repeat(width - length); }
-function wrap(value: string, width: number): string[] { const lines: string[] = []; for (const paragraph of value.split("\n")) { if (!paragraph) { lines.push(""); continue; } for (let index = 0; index < paragraph.length; index += width) lines.push(paragraph.slice(index, index + width)); } return lines; }
 function itemBody(item: ConversationItem): string { return item.text || item.summary || item.toolName || item.payloadType || item.envelopeType; }
-function highlight(value: string, query: string): string { if (!query) return value; return value.replace(new RegExp(escapeRegex(query), "ig"), (match) => `${colors.inverse}${match}${colors.reset}`); }
+function highlight(value: string, query: string): string {
+  const terms = Array.from(new Set(finderTerms(query))).sort((left, right) => right.length - left.length);
+  if (!terms.length) return value;
+  return value.replace(new RegExp(terms.map(escapeRegex).join("|"), "ig"), (match) => `${colors.inverse}${match}${colors.reset}`);
+}
 function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 main().catch((error) => { process.stderr.write(`${(error as Error).message}\n`); process.exitCode = 1; });

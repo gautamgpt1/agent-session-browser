@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import type { ConversationItem, ExportMode, SessionDetailResponse, SessionSummary, ToolCall, TurnGroup } from "../shared/types.js";
-import { getEffectiveToolName, getTranscriptCategory, isVisibleTranscriptItem } from "../shared/transcript.js";
+import { getEffectiveToolName, getTranscriptCategory, isTranscriptToolItem, isVisibleTranscriptItem } from "../shared/transcript.js";
 import type { BoundedParseOptions } from "./bounded-parse.js";
 import { parseClaudeJsonlFile } from "./claude-parser.js";
 import type { ViewerDatabase } from "./database.js";
@@ -162,10 +162,13 @@ function toDetailPage(cached: ParsedCache, options: DetailPageOptions, applyFilt
   const categoryCounts: Record<string, number> = {};
   const availableToolSet = new Set(Object.keys(toolCounts));
   for (const item of parsed.items) {
-    const category = getTranscriptCategory(item as ConversationItem, knownCategories);
-    categoryCounts[category] = (categoryCounts[category] || 0) + 1;
-    const toolName = getEffectiveToolName(item as ConversationItem, callToolMap);
+    const conversationItem = item as ConversationItem;
+    const toolName = getEffectiveToolName(conversationItem, callToolMap);
     if (toolName) availableToolSet.add(toolName);
+    if (!isTranscriptToolItem(conversationItem, callToolMap)) {
+      const category = getTranscriptCategory(conversationItem, knownCategories);
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+    }
   }
 
   const matchingItems = applyFilters
