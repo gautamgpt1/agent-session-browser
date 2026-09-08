@@ -1,6 +1,6 @@
 {
   "name": "agent-session-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browse, find, filter, export, and resume local coding-agent sessions.",
   "license": "MIT",
   "author": {
@@ -21,6 +21,7 @@
     "codex",
     "claude-code",
     "gemini-cli",
+    "antigravity",
     "pi-coding-agent",
     "jsonl-viewer",
     "terminal-ui",
