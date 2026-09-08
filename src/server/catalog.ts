@@ -3,7 +3,7 @@ import path from "node:path";
 import type { AgentProvider, ArchiveState } from "../shared/types.js";
 import type { ParsedSession } from "./parser.js";
 import { parseGeminiSessionFile } from "./gemini-parser.js";
-import { cleanAntigravityArgString, extractAntigravityConversationId } from "./antigravity-parser.js";
+import { cleanAntigravityArgString, extractAntigravityConversationId, identifyAntigravitySource } from "./antigravity-parser.js";
 import { compactWhitespace, toDisplayText } from "./text.js";
 
 type JsonObject = Record<string, any>;
@@ -196,7 +196,7 @@ function antigravityMetadata(records: JsonObject[], sourcePath: string, knownCwd
 
   for (const record of records) {
     ({ startedAt, lastEventAt } = includeTimestamp(startedAt, lastEventAt, stringOrNull(record.created_at || record.timestamp)));
-    if (record.type === "USER_INPUT" || record.source === "USER_EXPLICIT") {
+    if (record.type === "USER_INPUT" && record.source === "USER_EXPLICIT") {
       let text = typeof record.content === "string" ? record.content : "";
       const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
       if (match) text = match[1].trim();
@@ -210,7 +210,7 @@ function antigravityMetadata(records: JsonObject[], sourcePath: string, knownCwd
       }
     }
     if (record.type === "PLANNER_RESPONSE") {
-      if (record.content && typeof record.content === "string") {
+      if (record.source === "MODEL" && record.status === "DONE" && !record.tool_calls?.length && record.content && typeof record.content === "string") {
         lastAssistantMessage = preview(record.content);
       }
       if (Array.isArray(record.tool_calls) && !detectedCwd) {
@@ -229,8 +229,8 @@ function antigravityMetadata(records: JsonObject[], sourcePath: string, knownCwd
     nativeId,
     detectedCwd,
     "antigravity",
-    "cli",
-    "antigravity",
+    identifyAntigravitySource(sourcePath),
+    null,
     "google",
     startedAt,
     lastEventAt,

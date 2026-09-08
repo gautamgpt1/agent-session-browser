@@ -158,7 +158,9 @@ function isSupportedSessionFile(root: SessionRoot, filePath: string): boolean {
     return path.basename(path.dirname(filePath)).toLowerCase() === "chats" && fileName.startsWith("session-") && /\.jsonl?$/.test(fileName);
   }
   if (root.provider === "antigravity") {
-    return fileName === "transcript.jsonl";
+    if (fileName === "transcript_full.jsonl") return true;
+    if (fileName !== "transcript.jsonl") return false;
+    return !fs.existsSync(path.join(path.dirname(filePath), "transcript_full.jsonl"));
   }
   return fileName.endsWith(".jsonl");
 }

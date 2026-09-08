@@ -165,7 +165,7 @@ It places the session list and selected conversation side by side. You can brows
 | `Up` / `Down` | Move through sessions or scroll the focused transcript one wrapped line |
 | `Page Up` / `Page Down` | Jump one visible page in the focused pane |
 | Type / `Backspace` | Search the focused session list or transcript |
-| `Tab` | Cycle through all providers, Codex, Claude Code, Gemini CLI, and Pi |
+| `Tab` | Cycle through all providers, Codex, Claude Code, Gemini CLI, Pi, and Antigravity |
 | `Ctrl+L` | Cycle between split, session-only, and transcript-only views |
 | `Ctrl+O` | Expand the current shortened message when the inline hint is visible |
 | `Ctrl+R` | Show the provider-native resume command |
@@ -182,7 +182,7 @@ When resuming, the TUI launches the installed provider CLI in the working direct
 | Claude Code | `~/.claude/projects` | `claude --resume <id>` |
 | Gemini CLI | `~/.gemini/tmp/<project>/chats` | `gemini --resume <id>` |
 | Pi | `~/.pi/agent/sessions` | `pi --session <id>` |
-| Antigravity | `~/.gemini/antigravity-cli/brain` or `~/.antigravity/brain` | `agy --conversation <id>` |
+| Antigravity | `~/.gemini/antigravity-cli/brain` and `~/.gemini/antigravity/brain` | `agy --conversation <id>` |
 
 Provider-specific coverage includes:
 
@@ -190,7 +190,7 @@ Provider-specific coverage includes:
 - **Claude Code:** project sessions and distinct subagent transcripts, including tools, results, context, metadata, and provider events.
 - **Gemini CLI:** project-path recovery, current chat histories, and supported legacy session structures.
 - **Pi:** session branches, compactions, summaries, model changes, usage, tool calls, and tool results.
-- **Antigravity:** session transcripts, prompt normalization, thinking and planning, tool calls and outputs, and conversation resume.
+- **Antigravity:** CLI and IDE transcripts, prompt normalization, thinking and planning, linked tool calls and outputs, and conversation resume. Full transcripts are preferred when Antigravity stores both full and shortened variants.
 
 Provider history formats change over time. Recognized content is normalized for readable display, while unknown records remain available as provider events and raw JSON rather than being silently dropped.
 

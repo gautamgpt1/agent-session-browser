@@ -1,12 +1,33 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ArchiveState, ConversationItem, ToolCall } from "../shared/types.js";
-import { BoundedItemCollector, BoundedMap, type BoundedParseOptions, HeadTailBuffer, SearchTextCollector } from "./bounded-parse.js";
+import { BoundedItemCollector, type BoundedParseOptions, HeadTailBuffer, SearchTextCollector } from "./bounded-parse.js";
 import type { ParsedSession, ParsedTurn } from "./parser.js";
 import { iterateSourceLines } from "./source-lines.js";
 import { compactWhitespace, toDisplayText } from "./text.js";
 
 type JsonObject = Record<string, any>;
+type ParsedTool = Omit<ToolCall, "id" | "cwd" | "archiveState">;
+
+const TOOL_RESULT_TYPES = new Set([
+  "RUN_COMMAND",
+  "VIEW_FILE",
+  "LIST_DIRECTORY",
+  "GREP_SEARCH",
+  "SEARCH_WEB",
+  "READ_URL_CONTENT",
+  "CODE_ACTION",
+  "ASK_QUESTION",
+  "INVOKE_SUBAGENT",
+  "IMAGE_GENERATION"
+]);
+
+const TOOL_RESULT_ALIASES: Record<string, string[]> = {
+  list_dir: ["LIST_DIRECTORY"],
+  write_to_file: ["CODE_ACTION"],
+  replace_file_content: ["CODE_ACTION"],
+  multi_replace_file_content: ["CODE_ACTION"]
+};
 
 export function extractAntigravityConversationId(filePath: string): string {
   const parts = path.resolve(filePath).split(path.sep);
@@ -18,6 +39,13 @@ export function extractAntigravityConversationId(filePath: string): string {
   if (uuidMatch) return uuidMatch[0];
   const parentDir = path.basename(path.dirname(filePath));
   return parentDir === "logs" ? path.basename(path.resolve(filePath, "../../..")) : parentDir;
+}
+
+export function identifyAntigravitySource(sourcePath: string): "cli" | "ide" | null {
+  const normalized = path.resolve(sourcePath).toLowerCase();
+  if (normalized.includes(`${path.sep}antigravity-cli${path.sep}`)) return "cli";
+  if (normalized.includes(`${path.sep}antigravity${path.sep}`)) return "ide";
+  return null;
 }
 
 export function cleanAntigravityArgString(val: unknown): string | null {
@@ -45,8 +73,7 @@ export async function parseAntigravitySessionFile(
   const stat = await fs.promises.stat(sourcePath);
   const collectionLimit = options.retainItems === false ? 0 : undefined;
   const itemCollector = new BoundedItemCollector(options);
-  const toolCollector = new HeadTailBuffer<Omit<ToolCall, "id" | "cwd" | "archiveState">>(collectionLimit);
-  const toolsByCallId = new BoundedMap<string, Omit<ToolCall, "id" | "cwd" | "archiveState">>(options.retainItems === false ? 10_000 : undefined);
+  const toolCollector = new HeadTailBuffer<ParsedTool>(collectionLimit);
   const searchText = new SearchTextCollector();
   const errors: string[] = [];
 
@@ -57,7 +84,7 @@ export async function parseAntigravitySessionFile(
   let firstUserMessage: string | null = null;
   let lastAssistantMessage: string | null = null;
   let detectedCwd: string | null = knownCwd;
-  let lastStartedTool: Omit<ToolCall, "id" | "cwd" | "archiveState"> | null = null;
+  const pendingTools: ParsedTool[] = [];
 
   const addItem = (entry: JsonObject, values: Partial<Omit<ConversationItem, "id" | "sessionId" | "lineNo" | "sequence">>) => {
     const item: Omit<ConversationItem, "id"> = {
@@ -81,7 +108,8 @@ export async function parseAntigravitySessionFile(
       text: values.text || null,
       rawJson: undefined,
       lineNo: lineCount,
-      sequence: sequence++
+      sequence: sequence++,
+      contentPreview: values.contentPreview || false
     };
     itemCollector.add(item);
     searchText.add([item.role, item.payloadType, item.toolName, item.summary, item.text]);
@@ -108,8 +136,16 @@ export async function parseAntigravitySessionFile(
     }
 
     const type = String(entry.type || "");
+    if (Array.isArray(entry.truncated_fields) && entry.truncated_fields.length > 0) {
+      addItem(entry, {
+        role: "system",
+        payloadType: "warning",
+        summary: "Provider-shortened record",
+        text: `Antigravity shortened these fields in its local transcript: ${entry.truncated_fields.map(String).join(", ")}`
+      });
+    }
 
-    if (type === "USER_INPUT" || entry.source === "USER_EXPLICIT") {
+    if (type === "USER_INPUT" && entry.source === "USER_EXPLICIT") {
       const rawContent = typeof entry.content === "string" ? entry.content : "";
       const text = extractUserPrompt(rawContent);
       if (text && !firstUserMessage) {
@@ -141,9 +177,10 @@ export async function parseAntigravitySessionFile(
       }
 
       // 2. Tool calls
-      if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
-        for (let i = 0; i < entry.tool_calls.length; i++) {
-          const call = entry.tool_calls[i];
+      const toolCalls = Array.isArray(entry.tool_calls) ? entry.tool_calls : [];
+      if (toolCalls.length > 0) {
+        for (let i = 0; i < toolCalls.length; i++) {
+          const call = toolCalls[i];
           if (!call || typeof call !== "object") continue;
           const toolName = stringOrNull(call.name) || "tool";
           const callId = `step-${entry.step_index ?? lineCount}-${i}`;
@@ -174,7 +211,7 @@ export async function parseAntigravitySessionFile(
             summary
           });
 
-          const toolRecord: Omit<ToolCall, "id" | "cwd" | "archiveState"> = {
+          const toolRecord: ParsedTool = {
             sessionId: "",
             turnId: "main",
             timestamp,
@@ -185,37 +222,40 @@ export async function parseAntigravitySessionFile(
             status: "started"
           };
           toolCollector.add(toolRecord);
-          toolsByCallId.set(callId, toolRecord);
-          lastStartedTool = toolRecord;
+          pendingTools.push(toolRecord);
         }
       }
 
       // 3. Assistant text content
       if (entry.content) {
         const text = String(entry.content);
-        lastAssistantMessage = compactWhitespace(text).slice(0, 500);
+        const completedFinal = entry.source === "MODEL" && entry.status === "DONE" && toolCalls.length === 0;
+        if (completedFinal) lastAssistantMessage = compactWhitespace(text).slice(0, 500);
         addItem(entry, {
           role: "assistant",
           payloadType: "message",
           text,
-          phase: "final_answer"
+          phase: completedFinal ? "final_answer" : entry.status === "RUNNING" ? "incomplete" : "commentary"
         });
       }
       continue;
     }
 
-    if (type === "GENERIC") {
+    if (TOOL_RESULT_TYPES.has(type) || (type === "GENERIC" && pendingTools.length > 0)) {
       const outputText = typeof entry.content === "string" ? entry.content : toDisplayText(entry.content);
+      const pendingTool = takePendingTool(pendingTools, type);
+      const failed = entry.status === "ERROR";
       addItem(entry, {
         role: "tool",
         payloadType: "toolResult",
+        toolName: pendingTool?.toolName || null,
+        callId: pendingTool?.callId || null,
         text: outputText,
-        summary: "Tool output"
+        summary: pendingTool ? `${pendingTool.toolName} output` : "Tool output"
       });
-      if (lastStartedTool) {
-        lastStartedTool.outputText = outputText;
-        lastStartedTool.status = "completed";
-        lastStartedTool = null;
+      if (pendingTool) {
+        pendingTool.outputText = outputText;
+        pendingTool.status = failed ? "error" : "completed";
       }
       continue;
     }
@@ -225,13 +265,15 @@ export async function parseAntigravitySessionFile(
       addItem(entry, {
         role: "system",
         payloadType: "error",
+        toolName: pendingTools[0]?.toolName || null,
+        callId: pendingTools[0]?.callId || null,
         text: errorText,
         summary: "Error"
       });
-      if (lastStartedTool) {
-        lastStartedTool.outputText = errorText;
-        lastStartedTool.status = "error";
-        lastStartedTool = null;
+      const failedTool = pendingTools.shift();
+      if (failedTool) {
+        failedTool.outputText = errorText;
+        failedTool.status = "error";
       }
       continue;
     }
@@ -281,8 +323,8 @@ export async function parseAntigravitySessionFile(
     archiveState,
     cwd,
     originator: "antigravity",
-    source: "cli",
-    cliVersion: "antigravity",
+    source: identifyAntigravitySource(sourcePath),
+    cliVersion: null,
     modelProvider: "google",
     startedAt,
     lastEventAt,
@@ -299,6 +341,17 @@ export async function parseAntigravitySessionFile(
     searchText: [cwd, firstUserMessage, searchText.value()].filter(Boolean).join("\n"),
     deferredRecords: itemCollector.deferredCount
   };
+}
+
+function takePendingTool(pendingTools: ParsedTool[], resultType: string): ParsedTool | null {
+  if (!pendingTools.length) return null;
+  const matchingIndex = pendingTools.findIndex((tool) => toolResultTypes(tool.toolName).includes(resultType));
+  return pendingTools.splice(matchingIndex >= 0 ? matchingIndex : 0, 1)[0] || null;
+}
+
+function toolResultTypes(toolName: string): string[] {
+  const normalized = toolName.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+  return [normalized.toUpperCase(), ...(TOOL_RESULT_ALIASES[normalized] || [])];
 }
 
 function stringOrNull(value: unknown): string | null {

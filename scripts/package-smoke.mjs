@@ -64,12 +64,17 @@ try {
     AGENT_SESSION_BROWSER_CLAUDE_HOME: path.join(root, "tests", "fixtures", "claude-home"),
     AGENT_SESSION_BROWSER_GEMINI_HOME: path.join(root, "tests", "fixtures", "gemini-home"),
     AGENT_SESSION_BROWSER_PI_HOME: path.join(root, "tests", "fixtures", "pi-home"),
+    AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME: path.join(root, "tests", "fixtures", "antigravity-home"),
     AGENT_SESSION_BROWSER_DATA_DIR: dataDirectory,
     AGENT_SESSION_BROWSER_DISABLE_WATCHER: "1"
   };
   const defaultTui = run(process.execPath, [entrypoint], runDirectory, fixtureEnvironment);
-  if (defaultTui.stdout.split(/\r?\n/).filter((line) => line.includes("\t")).length !== 5) {
-    throw new Error("The bare packaged command did not default to the five-session TUI fixture listing");
+  const defaultTuiRows = defaultTui.stdout.split(/\r?\n/).filter((line) => line.includes("\t"));
+  if (defaultTuiRows.length !== 6) {
+    throw new Error("The bare packaged command did not default to the six-session TUI fixture listing");
+  }
+  if (!defaultTuiRows.some((line) => line.includes("\tantigravity\t"))) {
+    throw new Error("The packaged TUI did not list the Antigravity fixture session");
   }
   const port = await availablePort();
   webProcess = spawn(process.execPath, [entrypoint, "web", "--port", String(port), "--no-open"], {
@@ -86,7 +91,7 @@ try {
   const html = await rootResponse.text();
   if (!rootResponse.ok || !html.includes('id="root"')) throw new Error("Packaged web client was not served");
   const status = await waitForIndex(port);
-  if (status.sessions !== 5) throw new Error(`Packaged server found ${status.sessions} fixture sessions instead of 5`);
+  if (status.sessions !== 6) throw new Error(`Packaged server found ${status.sessions} fixture sessions instead of 6`);
 
   await stopWebProcess();
   const occupiedServer = net.createServer();
@@ -185,7 +190,7 @@ async function waitForIndex(port) {
   while (Date.now() < deadline) {
     const response = await fetch(`http://127.0.0.1:${port}/api/index/status`);
     status = await response.json();
-    if (!status.running && status.sessions === 5) return status;
+    if (!status.running && status.sessions === 6) return status;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Packaged index did not settle: ${JSON.stringify(status)}`);

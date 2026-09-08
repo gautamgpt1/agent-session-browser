@@ -16,6 +16,7 @@ const child = spawn(process.execPath, [path.join(root, "scripts", "start-product
     AGENT_SESSION_BROWSER_CLAUDE_HOME: path.join(root, "tests", "fixtures", "claude-home"),
     AGENT_SESSION_BROWSER_GEMINI_HOME: path.join(root, "tests", "fixtures", "gemini-home"),
     AGENT_SESSION_BROWSER_PI_HOME: path.join(root, "tests", "fixtures", "pi-home"),
+    AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME: path.join(root, "tests", "fixtures", "antigravity-home"),
     AGENT_SESSION_BROWSER_DATA_DIR: dataDir,
     AGENT_SESSION_BROWSER_PORT: String(port),
     AGENT_SESSION_BROWSER_DISABLE_WATCHER: "1"
@@ -33,7 +34,7 @@ try {
   const { response: statusResponse, status } = await waitForIndex(port);
   const html = await rootResponse.text();
   if (!rootResponse.ok || !html.includes('id="root"')) throw new Error("Compiled client was not served");
-  if (!statusResponse.ok || status.sessions !== 5) throw new Error(`Expected 5 indexed fixture sessions, received ${status.sessions}`);
+  if (!statusResponse.ok || status.sessions !== 6) throw new Error(`Expected 6 indexed fixture sessions, received ${status.sessions}`);
   if (!rootResponse.headers.get("content-security-policy")) throw new Error("Security headers were not applied");
   process.stdout.write(`Production smoke test passed on http://127.0.0.1:${port}\n`);
 } finally {
@@ -79,10 +80,10 @@ async function waitForIndex(selectedPort) {
   while (Date.now() < deadline) {
     response = await fetch(`http://127.0.0.1:${selectedPort}/api/index/status`);
     status = await response.json();
-    if (!status.running && status.sessions === 5) return { response, status };
+    if (!status.running && status.sessions === 6) return { response, status };
     await delay(50);
   }
-  throw new Error(`Index did not settle at 5 sessions; last status: ${JSON.stringify(status)}`);
+  throw new Error(`Index did not settle at 6 sessions; last status: ${JSON.stringify(status)}`);
 }
 
 function delay(milliseconds) {

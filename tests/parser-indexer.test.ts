@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveAppConfig } from "../src/server/config.js";
 import { ViewerDatabase } from "../src/server/database.js";
@@ -470,24 +471,52 @@ describe("Antigravity parser", () => {
               toolAction: "Listing directory contents",
               toolSummary: "List files"
             }
+          },
+          {
+            name: "view_file",
+            args: { AbsolutePath: "/path/to/antigravity/file.txt" }
           }
         ]
       },
       {
         step_index: 2,
         source: "MODEL",
-        type: "GENERIC",
+        type: "VIEW_FILE",
         status: "DONE",
         created_at: "2026-06-06T00:00:02.000Z",
-        content: "total 0\n-rw-r--r-- 1 user staff 0 Jun 6 00:00 file.txt"
+        content: "fixture file contents"
       },
       {
         step_index: 3,
         source: "MODEL",
-        type: "PLANNER_RESPONSE",
+        type: "RUN_COMMAND",
         status: "DONE",
         created_at: "2026-06-06T00:00:03.000Z",
+        content: "total 0\n-rw-r--r-- 1 user staff 0 Jun 6 00:00 file.txt"
+      },
+      {
+        step_index: 4,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "RUNNING",
+        created_at: "2026-06-06T00:00:04.000Z",
+        content: "Still checking the project."
+      },
+      {
+        step_index: 5,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:05.000Z",
         content: "Antigravity fixture inspection completed successfully."
+      },
+      {
+        step_index: 6,
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:06.000Z",
+        content: "Background bookkeeping"
       }
     ]);
     const parsed = await parseAntigravitySessionFile(file, "active");
@@ -500,9 +529,30 @@ describe("Antigravity parser", () => {
     });
     expect(parsed.firstUserMessage).toBe("Inspect the Antigravity fixture project");
     expect(parsed.items.find((item) => item.payloadType === "reasoning")?.text).toBe("Plan the inspection of the project files.");
+    expect(parsed.items.find((item) => item.text === "Still checking the project.")?.phase).toBe("incomplete");
     expect(parsed.items.find((item) => item.text === "Antigravity fixture inspection completed successfully.")?.phase).toBe("final_answer");
+    expect(parsed.lastAssistantMessage).toBe("Antigravity fixture inspection completed successfully.");
     expect(parsed.tools[0]).toMatchObject({ toolName: "run_command", outputText: "total 0\n-rw-r--r-- 1 user staff 0 Jun 6 00:00 file.txt", status: "completed" });
+    expect(parsed.tools[1]).toMatchObject({ toolName: "view_file", outputText: "fixture file contents", status: "completed" });
+    expect(parsed.items.find((item) => item.text === "fixture file contents")).toMatchObject({ toolName: "view_file", callId: "step-1-1" });
+    expect(parsed.items.find((item) => item.text === "Background bookkeeping")?.role).toBeNull();
     expect(resumeCommand("antigravity", parsed.nativeId)).toBe("agy --conversation antigravity-session-id");
+
+    const db = new ViewerDatabase(path.join(root, "index.sqlite"), { forcePlainTextSearch: true });
+    try {
+      db.upsertParsedSession(parsed);
+      const page = await new SessionSourceReader(db).getPage(parsed.id, {
+        tools: ["run_command"],
+        categories: [],
+        knownCategories: []
+      });
+      const items = page!.turns.flatMap((turn) => turn.items);
+      expect(items.map((item) => item.payloadType)).toEqual(["toolCall", "toolResult"]);
+      expect(items.map((item) => item.toolName)).toEqual(["run_command", "run_command"]);
+      expect(items[1].text).toContain("file.txt");
+    } finally {
+      db.close();
+    }
   });
 
   it("indexes Antigravity sessions and reads detailed pages", async () => {
@@ -537,7 +587,7 @@ describe("Antigravity parser", () => {
         {
           step_index: 2,
           source: "MODEL",
-          type: "GENERIC",
+          type: "RUN_COMMAND",
           status: "DONE",
           created_at: "2026-06-06T00:00:02.000Z",
           content: "hello\n"
@@ -581,6 +631,77 @@ describe("Antigravity parser", () => {
       expect(page?.session.provider).toBe("antigravity");
       expect(page?.loadedItemCount).toBeGreaterThan(0);
       expect(page?.turns[0].items.length).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("discovers CLI and IDE stores, prefers full transcripts, and reads workspace metadata", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-viewer-antigravity-roots-"));
+    tempDirs.push(root);
+    const geminiHome = path.join(root, ".gemini");
+    const cliHome = path.join(geminiHome, "antigravity-cli");
+    const ideHome = path.join(geminiHome, "antigravity");
+    const cliId = "66666666-6666-4666-8666-666666666666";
+    const ideId = "77777777-7777-4777-8777-777777777777";
+    const cliLogs = path.join(cliHome, "brain", cliId, ".system_generated", "logs");
+    const ideLogs = path.join(ideHome, "brain", ideId, ".system_generated", "logs");
+
+    writeJsonl(path.join(cliLogs, "transcript.jsonl"), [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "<USER_REQUEST>Short CLI prompt</USER_REQUEST>", truncated_fields: ["content"] }
+    ]);
+    writeJsonl(path.join(cliLogs, "transcript_full.jsonl"), [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "<USER_REQUEST>Complete CLI prompt</USER_REQUEST>" }
+    ]);
+    writeJsonl(path.join(ideLogs, "transcript.jsonl"), [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "<USER_REQUEST>IDE prompt</USER_REQUEST>" },
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", content: "Shortened IDE answer", truncated_fields: ["content"] }
+    ]);
+
+    fs.mkdirSync(cliHome, { recursive: true });
+    const summaries = new DatabaseSync(path.join(cliHome, "conversation_summaries.db"));
+    try {
+      summaries.exec("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT)");
+      summaries.prepare("INSERT INTO conversation_summaries VALUES (?, ?)").run(
+        cliId,
+        JSON.stringify([pathToFileURL(path.join(root, "workspace")).href])
+      );
+    } finally {
+      summaries.close();
+    }
+
+    process.env.AGENT_SESSION_BROWSER_CODEX_HOME = path.join(root, "codex");
+    process.env.AGENT_SESSION_BROWSER_CLAUDE_HOME = path.join(root, "claude");
+    process.env.AGENT_SESSION_BROWSER_GEMINI_HOME = geminiHome;
+    process.env.AGENT_SESSION_BROWSER_PI_HOME = path.join(root, "pi");
+    process.env.AGENT_SESSION_BROWSER_DATA_DIR = path.join(root, "browser-data");
+
+    const config = resolveAppConfig();
+    const antigravityRoots = config.roots.filter((candidate) => candidate.provider === "antigravity");
+    expect(antigravityRoots.map((candidate) => candidate.path)).toEqual([
+      path.join(cliHome, "brain"),
+      path.join(ideHome, "brain")
+    ]);
+    expect(config.antigravityProjectPaths.get(cliId)).toBe(path.join(root, "workspace"));
+
+    const db = new ViewerDatabase(config.dbPath, { forcePlainTextSearch: true });
+    try {
+      const indexer = new CodexIndexer(config, db);
+      expect(await indexer.refreshAll()).toMatchObject({ filesSeen: 2, filesIndexed: 2, sessions: 2, parseErrors: 0 });
+      const sessions = (await db.listSessions({ provider: "antigravity", limit: "all" }, indexer.getStatus())).sessions;
+      const cli = sessions.find((session) => session.nativeId === cliId)!;
+      const ide = sessions.find((session) => session.nativeId === ideId)!;
+      expect(cli.sourcePath).toBe(path.join(cliLogs, "transcript_full.jsonl"));
+      expect(cli.firstUserMessage).toBe("Complete CLI prompt");
+      expect(cli.cwd).toBe(path.join(root, "workspace"));
+      expect(cli.source).toBe("cli");
+      expect(ide.source).toBe("ide");
+
+      const ideDetail = await new SessionSourceReader(db).getDetail(ide.id);
+      expect(ideDetail!.turns.flatMap((turn) => turn.items)).toContainEqual(expect.objectContaining({
+        payloadType: "warning",
+        text: "Antigravity shortened these fields in its local transcript: content"
+      }));
     } finally {
       db.close();
     }
@@ -792,6 +913,16 @@ describe("large source safeguards", () => {
         { type: "gemini", content: completeText, thoughts: [{ subject: "Plan", description: "Readable Gemini reasoning" }] }
       ]
     }), "assistant")).toBe(completeText);
+
+    const antigravity = expandedRecordSections("antigravity", JSON.stringify({
+      type: "RUN_COMMAND",
+      content: "Command completed successfully",
+      truncated_fields: ["content"]
+    }));
+    expect(antigravity).toEqual([
+      { label: "Tool output", kind: "tool", text: "Command completed successfully" },
+      { label: "Provider-shortened fields", kind: "event", text: "content" }
+    ]);
   });
 });
 

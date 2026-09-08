@@ -128,14 +128,13 @@ function piSections(entry: JsonRecord): ExpandedRecordSection[] {
 
 function antigravitySections(record: JsonRecord): ExpandedRecordSection[] {
   const type = stringValue(record.type) || "provider event";
+  const sections: ExpandedRecordSection[] = [];
   if (type === "USER_INPUT") {
     let text = stringValue(record.content) || "";
     const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
     if (match) text = match[1].trim();
-    return section("User message", "message", text);
-  }
-  if (type === "PLANNER_RESPONSE") {
-    const sections: ExpandedRecordSection[] = [];
+    addSection(sections, "User message", "message", text);
+  } else if (type === "PLANNER_RESPONSE") {
     if (record.thinking) {
       addSection(sections, "Reasoning", "reasoning", stringValue(record.thinking) || "");
     }
@@ -151,12 +150,20 @@ function antigravitySections(record: JsonRecord): ExpandedRecordSection[] {
     if (record.content) {
       addSection(sections, "Assistant message", "message", stringValue(record.content) || "");
     }
-    return sections.length ? sections : section("Assistant response", "event", displayValue(record));
+    if (!sections.length) addSection(sections, "Assistant response", "event", displayValue(record));
+  } else if (isAntigravityToolResult(type)) {
+    addSection(sections, "Tool output", "tool", displayValue(record.content));
+  } else {
+    addSection(sections, humanize(type), "event", displayFirst(record, ["content", "text", "summary"]) || displayValue(record));
   }
-  if (type === "GENERIC") {
-    return section("Tool output", "tool", displayValue(record.content));
+  if (Array.isArray(record.truncated_fields) && record.truncated_fields.length > 0) {
+    addSection(sections, "Provider-shortened fields", "event", record.truncated_fields.map(displayValue).filter(Boolean).join(", "));
   }
-  return section(humanize(type), "event", displayFirst(record, ["content", "text", "summary"]) || displayValue(record));
+  return sections;
+}
+
+function isAntigravityToolResult(type: string): boolean {
+  return ["RUN_COMMAND", "VIEW_FILE", "LIST_DIRECTORY", "GREP_SEARCH", "SEARCH_WEB", "READ_URL_CONTENT", "CODE_ACTION", "ASK_QUESTION", "INVOKE_SUBAGENT", "IMAGE_GENERATION"].includes(type);
 }
 
 function section(label: string, kind: ExpandedRecordSection["kind"], text: string): ExpandedRecordSection[] {
