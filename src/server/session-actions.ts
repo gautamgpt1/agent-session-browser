@@ -11,6 +11,7 @@ export function resumeInvocation(provider: AgentProvider, nativeId: string): { c
   if (provider === "claude") return { command: "claude", args: ["--resume", nativeId] };
   if (provider === "gemini") return { command: "gemini", args: ["--resume", nativeId] };
   if (provider === "pi") return { command: "pi", args: ["--session", nativeId] };
+  if (provider === "antigravity") return { command: "agy", args: ["--conversation", nativeId] };
   return { command: "codex", args: ["resume", nativeId] };
 }
 
@@ -221,6 +222,7 @@ function providerLabel(provider: AgentProvider): string {
   if (provider === "claude") return "Claude Code";
   if (provider === "gemini") return "Gemini CLI";
   if (provider === "pi") return "Pi";
+  if (provider === "antigravity") return "Antigravity";
   return "Codex";
 }
 

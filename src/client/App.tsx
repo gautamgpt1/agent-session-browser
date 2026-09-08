@@ -1636,6 +1636,7 @@ function providerLabel(provider: SessionSummary["provider"]): string {
   if (provider === "claude") return "Claude Code";
   if (provider === "gemini") return "Gemini CLI";
   if (provider === "pi") return "Pi";
+  if (provider === "antigravity") return "Antigravity";
   return "Codex";
 }
 
@@ -1644,5 +1645,6 @@ function getResumeCommand(provider: SessionSummary["provider"], nativeId: string
   if (provider === "claude") return `claude --resume ${nativeId}`;
   if (provider === "gemini") return `gemini --resume ${nativeId}`;
   if (provider === "pi") return `pi --session ${nativeId}`;
+  if (provider === "antigravity") return `agy --conversation ${nativeId}`;
   return `codex resume ${nativeId}`;
 }

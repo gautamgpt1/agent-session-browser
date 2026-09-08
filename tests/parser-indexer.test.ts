@@ -10,6 +10,7 @@ import { parseCodexJsonlFile } from "../src/server/parser.js";
 import { parseClaudeJsonlFile } from "../src/server/claude-parser.js";
 import { parseGeminiSessionFile, readGeminiJsonSourceRecord } from "../src/server/gemini-parser.js";
 import { parsePiSessionFile } from "../src/server/pi-parser.js";
+import { parseAntigravitySessionFile } from "../src/server/antigravity-parser.js";
 import { catalogSessionFile } from "../src/server/catalog.js";
 import { expandedMessageText, expandedRecordSections } from "../src/client/record-display.js";
 import { exportSession, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../src/server/session-actions.js";
@@ -28,6 +29,7 @@ afterEach(() => {
   delete process.env.AGENT_SESSION_BROWSER_CLAUDE_HOME;
   delete process.env.AGENT_SESSION_BROWSER_GEMINI_HOME;
   delete process.env.AGENT_SESSION_BROWSER_PI_HOME;
+  delete process.env.AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME;
   delete process.env.AGENT_SESSION_BROWSER_DATA_DIR;
 });
 
@@ -436,6 +438,152 @@ describe("Pi parser", () => {
     expect(parsed.items.find((item) => item.envelopeType === "branch_summary")?.parentId).toBe("user0001");
     expect(parsed.tools[0]).toMatchObject({ toolName: "bash", outputText: "fixture listing", status: "completed" });
     expect(resumeCommand("pi", parsed.nativeId)).toBe("pi --session pi-session-id");
+  });
+});
+
+describe("Antigravity parser", () => {
+  it("normalizes user prompts, thinking, tool calls, tool results, and resume command", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-viewer-antigravity-"));
+    tempDirs.push(root);
+    const file = writeJsonl(path.join(root, "brain", "antigravity-session-id", ".system_generated", "logs", "transcript.jsonl"), [
+      {
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:00.000Z",
+        content: "<USER_REQUEST>\nInspect the Antigravity fixture project\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nWorkspace: /path/to/antigravity\n</ADDITIONAL_METADATA>"
+      },
+      {
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:01.000Z",
+        thinking: "Plan the inspection of the project files.",
+        tool_calls: [
+          {
+            name: "run_command",
+            args: {
+              CommandLine: "ls -la",
+              Cwd: "/path/to/antigravity",
+              toolAction: "Listing directory contents",
+              toolSummary: "List files"
+            }
+          }
+        ]
+      },
+      {
+        step_index: 2,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:02.000Z",
+        content: "total 0\n-rw-r--r-- 1 user staff 0 Jun 6 00:00 file.txt"
+      },
+      {
+        step_index: 3,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-06-06T00:00:03.000Z",
+        content: "Antigravity fixture inspection completed successfully."
+      }
+    ]);
+    const parsed = await parseAntigravitySessionFile(file, "active");
+    expect(parsed).toMatchObject({
+      id: "antigravity:antigravity-session-id",
+      nativeId: "antigravity-session-id",
+      provider: "antigravity",
+      cwd: "/path/to/antigravity",
+      modelProvider: "google"
+    });
+    expect(parsed.firstUserMessage).toBe("Inspect the Antigravity fixture project");
+    expect(parsed.items.find((item) => item.payloadType === "reasoning")?.text).toBe("Plan the inspection of the project files.");
+    expect(parsed.items.find((item) => item.text === "Antigravity fixture inspection completed successfully.")?.phase).toBe("final_answer");
+    expect(parsed.tools[0]).toMatchObject({ toolName: "run_command", outputText: "total 0\n-rw-r--r-- 1 user staff 0 Jun 6 00:00 file.txt", status: "completed" });
+    expect(resumeCommand("antigravity", parsed.nativeId)).toBe("agy --conversation antigravity-session-id");
+  });
+
+  it("indexes Antigravity sessions and reads detailed pages", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-viewer-antigravity-index-"));
+    tempDirs.push(root);
+    const antigravityRoot = path.join(root, "antigravity-home");
+    writeJsonl(
+      path.join(antigravityRoot, "brain", "55555555-5555-4555-8555-555555555555", ".system_generated", "logs", "transcript.jsonl"),
+      [
+        {
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          status: "DONE",
+          created_at: "2026-06-06T00:00:00.000Z",
+          content: "<USER_REQUEST>\nInspect the Antigravity fixture project\n</USER_REQUEST>"
+        },
+        {
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          created_at: "2026-06-06T00:00:01.000Z",
+          thinking: "Thinking about the task.",
+          tool_calls: [
+            {
+              name: "run_command",
+              args: { CommandLine: "echo hello", Cwd: "C:\\Projects\\antigravity" }
+            }
+          ]
+        },
+        {
+          step_index: 2,
+          source: "MODEL",
+          type: "GENERIC",
+          status: "DONE",
+          created_at: "2026-06-06T00:00:02.000Z",
+          content: "hello\n"
+        },
+        {
+          step_index: 3,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          created_at: "2026-06-06T00:00:03.000Z",
+          content: "Done!"
+        }
+      ]
+    );
+
+    process.env.AGENT_SESSION_BROWSER_CODEX_HOME = path.join(root, "codex");
+    process.env.AGENT_SESSION_BROWSER_CLAUDE_HOME = path.join(root, "claude");
+    process.env.AGENT_SESSION_BROWSER_GEMINI_HOME = path.join(root, "gemini");
+    process.env.AGENT_SESSION_BROWSER_PI_HOME = path.join(root, "pi");
+    process.env.AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME = antigravityRoot;
+    process.env.AGENT_SESSION_BROWSER_DATA_DIR = path.join(root, "browser-data");
+
+    const config = resolveAppConfig();
+    const db = new ViewerDatabase(config.dbPath, { forcePlainTextSearch: true });
+    try {
+      const indexer = new CodexIndexer(config, db);
+      const reader = new SessionSourceReader(db);
+
+      const status = await indexer.refreshAll();
+      expect(status.filesSeen).toBe(1);
+      expect(status.filesIndexed).toBe(1);
+
+      const sessions = await db.listSessions({ provider: "antigravity" }, indexer.getStatus());
+      expect(sessions.total).toBe(1);
+      expect(sessions.sessions[0].nativeId).toBe("55555555-5555-4555-8555-555555555555");
+      expect(sessions.sessions[0].cwd).toBe("C:\\Projects\\antigravity");
+      expect(sessions.sessions[0].firstUserMessage).toBe("Inspect the Antigravity fixture project");
+
+      const page = await reader.getPage(sessions.sessions[0].id);
+      expect(page).not.toBeNull();
+      expect(page?.session.provider).toBe("antigravity");
+      expect(page?.loadedItemCount).toBeGreaterThan(0);
+      expect(page?.turns[0].items.length).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
   });
 });
 

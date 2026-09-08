@@ -22,6 +22,7 @@ export function expandedRecordSections(provider: AgentProvider, raw: string): Ex
   if (provider === "codex") return codexSections(value);
   if (provider === "claude") return claudeSections(value);
   if (provider === "gemini") return geminiSections(value);
+  if (provider === "antigravity") return antigravitySections(value);
   return piSections(value);
 }
 
@@ -123,6 +124,39 @@ function piSections(entry: JsonRecord): ExpandedRecordSection[] {
   if (role === "bashExecution") addSection(sections, "Bash execution", "tool", [displayValue(message.command), displayValue(message.output)].filter(Boolean).join("\n\n"));
   if (!sections.length) addSection(sections, roleLabel(role), "event", displayValue(message));
   return sections;
+}
+
+function antigravitySections(record: JsonRecord): ExpandedRecordSection[] {
+  const type = stringValue(record.type) || "provider event";
+  if (type === "USER_INPUT") {
+    let text = stringValue(record.content) || "";
+    const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+    if (match) text = match[1].trim();
+    return section("User message", "message", text);
+  }
+  if (type === "PLANNER_RESPONSE") {
+    const sections: ExpandedRecordSection[] = [];
+    if (record.thinking) {
+      addSection(sections, "Reasoning", "reasoning", stringValue(record.thinking) || "");
+    }
+    if (Array.isArray(record.tool_calls)) {
+      for (const call of record.tool_calls) {
+        if (isRecord(call)) {
+          const name = stringValue(call.name) || "Tool";
+          const args = isRecord(call.args) ? JSON.stringify(call.args, null, 2) : displayValue(call.args);
+          addSection(sections, `Tool call: ${name}`, "tool", args);
+        }
+      }
+    }
+    if (record.content) {
+      addSection(sections, "Assistant message", "message", stringValue(record.content) || "");
+    }
+    return sections.length ? sections : section("Assistant response", "event", displayValue(record));
+  }
+  if (type === "GENERIC") {
+    return section("Tool output", "tool", displayValue(record.content));
+  }
+  return section(humanize(type), "event", displayFirst(record, ["content", "text", "summary"]) || displayValue(record));
 }
 
 function section(label: string, kind: ExpandedRecordSection["kind"], text: string): ExpandedRecordSection[] {

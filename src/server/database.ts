@@ -202,7 +202,7 @@ function sessionIdentity(session: SessionSummary): string {
     const parts = session.cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
     return parts.at(-1) || session.cwd;
   }
-  const provider = session.provider === "claude" ? "Claude Code" : session.provider === "gemini" ? "Gemini CLI" : session.provider === "pi" ? "Pi" : "Codex";
+  const provider = session.provider === "claude" ? "Claude Code" : session.provider === "gemini" ? "Gemini CLI" : session.provider === "pi" ? "Pi" : session.provider === "antigravity" ? "Antigravity" : "Codex";
   return `${provider} session`;
 }
 

@@ -1,12 +1,15 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import type { AgentProvider, SessionRoot } from "../shared/types.js";
 
 export interface AppConfig {
   agentHomes: Record<AgentProvider, string>;
   roots: SessionRoot[];
   geminiProjectPaths: Map<string, string>;
+  antigravityProjectPaths: Map<string, string>;
   dbPath: string;
   bindHost: string;
   port: number;
@@ -34,11 +37,22 @@ export function resolvePiHome(): string {
   return path.resolve(process.env.AGENT_SESSION_BROWSER_PI_HOME || path.join(os.homedir(), ".pi"));
 }
 
+export function resolveAntigravityHome(geminiHome = resolveGeminiHome()): string {
+  const configured = process.env.AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME;
+  if (configured) {
+    return path.resolve(configured);
+  }
+  const defaultGeminiCli = path.join(geminiHome, "antigravity-cli");
+  if (fs.existsSync(defaultGeminiCli)) return defaultGeminiCli;
+  return path.join(os.homedir(), ".antigravity");
+}
+
 export function resolveAppConfig(): AppConfig {
   const codexHome = resolveCodexHome();
   const claudeHome = resolveClaudeHome();
   const geminiHome = resolveGeminiHome();
   const piHome = resolvePiHome();
+  const antigravityHome = resolveAntigravityHome(geminiHome);
   const roots: SessionRoot[] = [
     {
       provider: "codex",
@@ -69,6 +83,12 @@ export function resolveAppConfig(): AppConfig {
       kind: "active",
       path: path.join(piHome, "agent", "sessions"),
       exists: fs.existsSync(path.join(piHome, "agent", "sessions"))
+    },
+    {
+      provider: "antigravity",
+      kind: "active",
+      path: path.join(antigravityHome, "brain"),
+      exists: fs.existsSync(path.join(antigravityHome, "brain"))
     }
   ];
 
@@ -78,9 +98,10 @@ export function resolveAppConfig(): AppConfig {
   );
 
   return {
-    agentHomes: { codex: codexHome, claude: claudeHome, gemini: geminiHome, pi: piHome },
+    agentHomes: { codex: codexHome, claude: claudeHome, gemini: geminiHome, pi: piHome, antigravity: antigravityHome },
     roots,
     geminiProjectPaths: loadGeminiProjectPaths(geminiHome),
+    antigravityProjectPaths: loadAntigravityProjectPaths(antigravityHome),
     dbPath: path.join(appDataRoot, "index.sqlite"),
     bindHost: "127.0.0.1",
     port: parsePort(process.env.AGENT_SESSION_BROWSER_PORT || process.env.PORT),
@@ -133,3 +154,34 @@ function loadGeminiProjectPaths(geminiHome: string): Map<string, string> {
   }
   return result;
 }
+
+function loadAntigravityProjectPaths(antigravityHome: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const dbPath = path.join(antigravityHome, "conversation_summaries.db");
+  if (!fs.existsSync(dbPath)) return result;
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries").all() as Array<{ conversation_id: string; workspace_uris: string }>;
+      for (const row of rows) {
+        if (!row.workspace_uris) continue;
+        try {
+          const uris = JSON.parse(row.workspace_uris);
+          if (Array.isArray(uris) && uris.length > 0 && typeof uris[0] === "string") {
+            const uri = uris[0];
+            const parsed = uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+            result.set(row.conversation_id, parsed);
+          }
+        } catch {
+          // ignore malformed uris
+        }
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Database might be locked or unreadable
+  }
+  return result;
+}
+

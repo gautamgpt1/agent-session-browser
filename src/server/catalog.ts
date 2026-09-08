@@ -3,6 +3,7 @@ import path from "node:path";
 import type { AgentProvider, ArchiveState } from "../shared/types.js";
 import type { ParsedSession } from "./parser.js";
 import { parseGeminiSessionFile } from "./gemini-parser.js";
+import { cleanAntigravityArgString, extractAntigravityConversationId } from "./antigravity-parser.js";
 import { compactWhitespace, toDisplayText } from "./text.js";
 
 type JsonObject = Record<string, any>;
@@ -38,7 +39,9 @@ export async function catalogSessionFile(
       ? geminiMetadata(records, sourcePath, knownCwd)
       : provider === "pi"
         ? piMetadata(records, sourcePath)
-        : codexMetadata(records, sourcePath);
+        : provider === "antigravity"
+          ? antigravityMetadata(records, sourcePath, knownCwd)
+          : codexMetadata(records, sourcePath);
 
   return {
     ...metadata,
@@ -181,6 +184,59 @@ function piMetadata(records: JsonObject[], sourcePath: string) {
     }
   }
   return baseMetadata(`pi:${nativeId}`, nativeId, stringOrNull(header.cwd), "pi-tui", stringOrNull(header.parentSession) ? "fork" : "cli", header.version ? `session-v${header.version}` : null, modelProvider, startedAt, lastEventAt, firstUserMessage || sessionName, lastAssistantMessage);
+}
+
+function antigravityMetadata(records: JsonObject[], sourcePath: string, knownCwd: string | null = null) {
+  const nativeId = extractAntigravityConversationId(sourcePath);
+  let startedAt: string | null = null;
+  let lastEventAt: string | null = null;
+  let firstUserMessage: string | null = null;
+  let lastAssistantMessage: string | null = null;
+  let detectedCwd = knownCwd;
+
+  for (const record of records) {
+    ({ startedAt, lastEventAt } = includeTimestamp(startedAt, lastEventAt, stringOrNull(record.created_at || record.timestamp)));
+    if (record.type === "USER_INPUT" || record.source === "USER_EXPLICIT") {
+      let text = typeof record.content === "string" ? record.content : "";
+      const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+      if (match) text = match[1].trim();
+      if (text && !firstUserMessage) firstUserMessage = preview(text);
+      if (!detectedCwd) {
+        const cwdMatch = text.match(/(?:file:\/\/|['"]\/|[\s])(\/(?:Users|home|workspace|projects)[^\s'")\n]+)/i);
+        if (cwdMatch) {
+          const matched = cwdMatch[1].replace(/->.*$/, "").trim();
+          if (matched && !matched.includes("<")) detectedCwd = matched;
+        }
+      }
+    }
+    if (record.type === "PLANNER_RESPONSE") {
+      if (record.content && typeof record.content === "string") {
+        lastAssistantMessage = preview(record.content);
+      }
+      if (Array.isArray(record.tool_calls) && !detectedCwd) {
+        for (const call of record.tool_calls) {
+          const cwd = cleanAntigravityArgString(call?.args?.Cwd) || cleanAntigravityArgString(call?.args?.cwd);
+          if (cwd) { detectedCwd = cwd; break; }
+          const abs = cleanAntigravityArgString(call?.args?.AbsolutePath) || cleanAntigravityArgString(call?.args?.TargetFile);
+          if (abs) { detectedCwd = path.dirname(abs); break; }
+        }
+      }
+    }
+  }
+
+  return baseMetadata(
+    `antigravity:${nativeId}`,
+    nativeId,
+    detectedCwd,
+    "antigravity",
+    "cli",
+    "antigravity",
+    "google",
+    startedAt,
+    lastEventAt,
+    firstUserMessage,
+    lastAssistantMessage
+  );
 }
 
 function baseMetadata(id: string, nativeId: string, cwd: string | null, originator: string | null, source: string | null, cliVersion: string | null, modelProvider: string | null, startedAt: string | null, lastEventAt: string | null, firstUserMessage: string | null, lastAssistantMessage: string | null) {

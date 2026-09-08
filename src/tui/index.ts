@@ -14,7 +14,7 @@ import { availableTuiBodyRows, sanitizeTuiText, tuiFrameLayout, tuiPageStep, tui
 const ESC = "\x1b";
 const colors = {
   reset: `${ESC}[0m`, bold: `${ESC}[1m`, dim: `${ESC}[2m`, inverse: `${ESC}[7m`,
-  green: `${ESC}[38;5;42m`, blue: `${ESC}[38;5;75m`, amber: `${ESC}[38;5;214m`, magenta: `${ESC}[38;5;176m`, gray: `${ESC}[38;5;245m`, white: `${ESC}[38;5;255m`
+  green: `${ESC}[38;5;42m`, blue: `${ESC}[38;5;75m`, amber: `${ESC}[38;5;214m`, magenta: `${ESC}[38;5;176m`, cyan: `${ESC}[38;5;80m`, gray: `${ESC}[38;5;245m`, white: `${ESC}[38;5;255m`
 };
 
 interface CliOptions {
@@ -78,7 +78,7 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
   let debounce: NodeJS.Timeout | null = null;
   let generation = 0;
   let visibleBodyRows = 1;
-  const providers: Array<AgentProvider | ""> = ["", "codex", "claude", "gemini", "pi"];
+  const providers: Array<AgentProvider | ""> = ["", "codex", "claude", "gemini", "pi", "antigravity"];
   let initialSessionId = options.resolve ? database.resolveSession(options.resolve).session?.id || null : null;
 
   const refreshPreviewItems = (reset = false) => {
@@ -374,7 +374,7 @@ function parseArgs(args: string[]): CliOptions {
     else if (value === "--query" || value === "-q") options.query = nextValue(index++, value);
     else if (value === "--provider") {
       const provider = nextValue(index++, value);
-      if (!(["codex", "claude", "gemini", "pi"] as string[]).includes(provider)) throw new Error(`Invalid provider: ${provider}\n\n${usage()}`);
+      if (!(["codex", "claude", "gemini", "pi", "antigravity"] as string[]).includes(provider)) throw new Error(`Invalid provider: ${provider}\n\n${usage()}`);
       options.provider = provider as AgentProvider;
     }
     else if (value === "--session") options.resolve = nextValue(index++, value);
@@ -396,7 +396,7 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 function usage(): string {
-  return `Agent Session Browser TUI\n\nUsage:\n  asb [tui] [--query text] [--provider codex|claude|gemini|pi]\n  asb [tui] --session <id-or-path> --print-resume\n  asb [tui] --session <id-or-path> --export md|html [--mode conversation|readable|trace]\n\nOptions:\n  -q, --query <text>       Find sessions by first prompt or ID\n  --provider <provider>    Restrict the session list\n  --session <id-or-path>   Open, resume, or export one session\n  --print-resume           Print its native resume command\n  --export <md|html>       Export without opening the TUI\n  --mode <mode>            conversation, readable, or trace\n  -h, --help               Show this help\n`;
+  return `Agent Session Browser TUI\n\nUsage:\n  asb [tui] [--query text] [--provider codex|claude|gemini|pi|antigravity]\n  asb [tui] --session <id-or-path> --print-resume\n  asb [tui] --session <id-or-path> --export md|html [--mode conversation|readable|trace]\n\nOptions:\n  -q, --query <text>       Find sessions by first prompt or ID\n  --provider <provider>    Restrict the session list\n  --session <id-or-path>   Open, resume, or export one session\n  --print-resume           Print its native resume command\n  --export <md|html>       Export without opening the TUI\n  --mode <mode>            conversation, readable, or trace\n  -h, --help               Show this help\n`;
 }
 
 function nextAvailablePath(directory: string, filename: string): string {
@@ -408,8 +408,8 @@ function nextAvailablePath(directory: string, filename: string): string {
 }
 
 function emptyStatus() { return { running: false, lastRunAt: null, filesSeen: 0, filesIndexed: 0, filesSkipped: 0, sessions: 0, parseErrors: 0, error: null }; }
-function providerLabel(provider: AgentProvider): string { return provider === "claude" ? "Claude Code" : provider === "gemini" ? "Gemini CLI" : provider === "pi" ? "Pi" : "Codex"; }
-function providerColor(provider: AgentProvider, text: string): string { const color = provider === "codex" ? colors.green : provider === "claude" ? colors.amber : provider === "gemini" ? colors.blue : colors.magenta; return `${color}${text}${colors.reset}`; }
+function providerLabel(provider: AgentProvider): string { return provider === "claude" ? "Claude Code" : provider === "gemini" ? "Gemini CLI" : provider === "pi" ? "Pi" : provider === "antigravity" ? "Antigravity" : "Codex"; }
+function providerColor(provider: AgentProvider, text: string): string { const color = provider === "codex" ? colors.green : provider === "claude" ? colors.amber : provider === "gemini" ? colors.blue : provider === "antigravity" ? colors.cyan : colors.magenta; return `${color}${text}${colors.reset}`; }
 function itemLabel(item: ConversationItem): string { if (item.role === "user") return "USER"; if (item.role === "assistant") return item.phase === "final_answer" ? "ASSISTANT FINAL" : "ASSISTANT"; return (item.toolName || item.payloadType || item.envelopeType).toUpperCase(); }
 function compactDate(value: string | null): string { if (!value) return "----------"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value.slice(0, 10) : date.toISOString().slice(0, 10); }
 function compactTime(value: string | null): string { if (!value) return ""; const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
