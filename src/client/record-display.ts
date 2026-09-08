@@ -22,6 +22,7 @@ export function expandedRecordSections(provider: AgentProvider, raw: string): Ex
   if (provider === "codex") return codexSections(value);
   if (provider === "claude") return claudeSections(value);
   if (provider === "gemini") return geminiSections(value);
+  if (provider === "antigravity") return antigravitySections(value);
   return piSections(value);
 }
 
@@ -123,6 +124,46 @@ function piSections(entry: JsonRecord): ExpandedRecordSection[] {
   if (role === "bashExecution") addSection(sections, "Bash execution", "tool", [displayValue(message.command), displayValue(message.output)].filter(Boolean).join("\n\n"));
   if (!sections.length) addSection(sections, roleLabel(role), "event", displayValue(message));
   return sections;
+}
+
+function antigravitySections(record: JsonRecord): ExpandedRecordSection[] {
+  const type = stringValue(record.type) || "provider event";
+  const sections: ExpandedRecordSection[] = [];
+  if (type === "USER_INPUT") {
+    let text = stringValue(record.content) || "";
+    const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+    if (match) text = match[1].trim();
+    addSection(sections, "User message", "message", text);
+  } else if (type === "PLANNER_RESPONSE") {
+    if (record.thinking) {
+      addSection(sections, "Reasoning", "reasoning", stringValue(record.thinking) || "");
+    }
+    if (Array.isArray(record.tool_calls)) {
+      for (const call of record.tool_calls) {
+        if (isRecord(call)) {
+          const name = stringValue(call.name) || "Tool";
+          const args = isRecord(call.args) ? JSON.stringify(call.args, null, 2) : displayValue(call.args);
+          addSection(sections, `Tool call: ${name}`, "tool", args);
+        }
+      }
+    }
+    if (record.content) {
+      addSection(sections, "Assistant message", "message", stringValue(record.content) || "");
+    }
+    if (!sections.length) addSection(sections, "Assistant response", "event", displayValue(record));
+  } else if (isAntigravityToolResult(type)) {
+    addSection(sections, "Tool output", "tool", displayValue(record.content));
+  } else {
+    addSection(sections, humanize(type), "event", displayFirst(record, ["content", "text", "summary"]) || displayValue(record));
+  }
+  if (Array.isArray(record.truncated_fields) && record.truncated_fields.length > 0) {
+    addSection(sections, "Provider-shortened fields", "event", record.truncated_fields.map(displayValue).filter(Boolean).join(", "));
+  }
+  return sections;
+}
+
+function isAntigravityToolResult(type: string): boolean {
+  return ["RUN_COMMAND", "VIEW_FILE", "LIST_DIRECTORY", "GREP_SEARCH", "SEARCH_WEB", "READ_URL_CONTENT", "CODE_ACTION", "ASK_QUESTION", "INVOKE_SUBAGENT", "IMAGE_GENERATION"].includes(type);
 }
 
 function section(label: string, kind: ExpandedRecordSection["kind"], text: string): ExpandedRecordSection[] {

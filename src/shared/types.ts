@@ -1,6 +1,6 @@
 export type ArchiveState = "active" | "archived";
 export type ParseStatus = "ok" | "partial" | "error";
-export type AgentProvider = "codex" | "claude" | "gemini" | "pi";
+export type AgentProvider = "codex" | "claude" | "gemini" | "pi" | "antigravity";
 export type ExportFormat = "markdown" | "html";
 export type ExportMode = "conversation" | "readable" | "trace";
 

@@ -7,6 +7,7 @@ import type { ViewerDatabase } from "./database.js";
 import { parseGeminiSessionFile, readGeminiJsonSourceRecord } from "./gemini-parser.js";
 import { parseCodexJsonlFile, type ParsedSession } from "./parser.js";
 import { parsePiSessionFile } from "./pi-parser.js";
+import { parseAntigravitySessionFile } from "./antigravity-parser.js";
 import { StreamingSessionExport } from "./session-actions.js";
 import { buildSourceLineIndex, iterateSourceLines, readSourceLineAt, type SourceLineOffset } from "./source-lines.js";
 import { truncateText } from "./text.js";
@@ -144,6 +145,7 @@ async function parseSource(summary: SessionSummary, options: BoundedParseOptions
   if (summary.provider === "claude") return parseClaudeJsonlFile(summary.sourcePath, summary.archiveState, options);
   if (summary.provider === "gemini") return parseGeminiSessionFile(summary.sourcePath, summary.archiveState, summary.cwd, options);
   if (summary.provider === "pi") return parsePiSessionFile(summary.sourcePath, summary.archiveState, options);
+  if (summary.provider === "antigravity") return parseAntigravitySessionFile(summary.sourcePath, summary.archiveState, summary.cwd, options);
   return parseCodexJsonlFile(summary.sourcePath, summary.archiveState, options);
 }
 

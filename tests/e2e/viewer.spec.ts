@@ -28,7 +28,7 @@ test("indexes fixture sessions and supports the main viewer workflows", async ({
   await expect(page.locator(".session-card", { hasText: "Implement JSONL viewer fixture prompt" }).last()).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.locator(".session-card", { hasText: "Implement JSONL viewer fixture prompt" }).last()).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("6");
   await expect(page.getByText("Working directories", { exact: true })).toBeVisible();
   await expect(page.getByText("Recent sessions", { exact: true })).toBeVisible();
 
@@ -88,8 +88,19 @@ test("indexes fixture sessions and supports the main viewer workflows", async ({
   );
 
   await page.getByRole("button", { name: "Session filters" }).click();
+  await page.getByLabel("Agent").selectOption("antigravity");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("1");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".session-card", { hasText: "Inspect the Antigravity fixture project" }).last().click();
+  await expect(page.locator(".detail-pane")).toContainText("Antigravity fixture inspection completed successfully.");
+  await page.getByRole("button", { name: "Copy resume" }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "agy --conversation 88888888-8888-4888-8888-888888888888"
+  );
+
+  await page.getByRole("button", { name: "Session filters" }).click();
   await page.getByLabel("Agent").selectOption("");
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("6");
   const directoryFilter = page.getByRole("combobox", { name: "Working directory" });
   await expect(directoryFilter).toBeVisible();
   await directoryFilter.fill("fixture");
@@ -105,7 +116,7 @@ test("indexes fixture sessions and supports the main viewer workflows", async ({
   await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("1");
   await page.getByRole("button", { name: "Clear working directory" }).click();
   await expect(page).not.toHaveURL(/cwd=/);
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("6");
   await directoryFilter.fill("fixture");
   await directoryFilter.press("ArrowDown");
   await directoryFilter.press("Enter");
@@ -130,14 +141,14 @@ test("indexes fixture sessions and supports the main viewer workflows", async ({
   await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("1");
   await expect(page.locator(".session-card", { hasText: "Archived Codex fixture prompt" }).last()).toBeVisible();
   await page.getByLabel("Archive").selectOption("false");
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("4");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
   await page.getByLabel("Parse status").selectOption("true");
   await expect(page.getByText("No sessions match the current filters")).toBeVisible();
   await expect(page.locator(".detail-pane")).toContainText("No session selected");
   await page.getByLabel("Parse status").selectOption("false");
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("4");
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("6");
   await page.getByRole("button", { name: "Done" }).click();
 
   await page.locator(".session-card", { hasText: "Implement JSONL viewer fixture prompt" }).last().click();
@@ -174,7 +185,7 @@ test("indexes fixture sessions and supports the main viewer workflows", async ({
 
   await page.getByRole("checkbox", { name: "shell_command" }).check();
   await expect(page).toHaveURL(/tool=shell_command/);
-  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("5");
+  await expect(page.locator(".recent-section .sidebar-section-heading small")).toHaveText("6");
   await expect(page.locator(".session-card", { hasText: "Implement JSONL viewer fixture prompt" }).last()).toBeVisible();
   await expect(page.locator(".detail-pane")).toContainText("Directory listing output");
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { AppConfig } from "./config.js";
 import { catalogSessionFile } from "./catalog.js";
+import { extractAntigravityConversationId } from "./antigravity-parser.js";
 import { PARSER_VERSION, ViewerDatabase } from "./database.js";
 import type { ArchiveState, IndexStatus, SessionRoot } from "../shared/types.js";
 
@@ -121,6 +122,11 @@ export class SessionIndexer {
       const relative = path.relative(root.path, file);
       const projectSlug = relative.split(path.sep)[0];
       cwd = this.config.geminiProjectPaths.get(projectSlug) || null;
+    } else if (root.provider === "antigravity") {
+      const conversationId = extractAntigravityConversationId(file);
+      if (conversationId) {
+        cwd = this.config.antigravityProjectPaths.get(conversationId) || null;
+      }
     }
     return catalogSessionFile(root.provider, file, root.kind, cwd);
   }
@@ -133,6 +139,9 @@ async function collectSessionFiles(root: SessionRoot): Promise<string[]> {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (root.provider === "antigravity" && (entry.name === "steps" || entry.name === "tasks" || entry.name === "messages" || entry.name === "chunks" || entry.name === ".user_uploaded" || entry.name === "scratch")) {
+          continue;
+        }
         await walk(fullPath);
       } else if (entry.isFile() && isSupportedSessionFile(root, fullPath)) {
         results.push(fullPath);
@@ -147,6 +156,11 @@ function isSupportedSessionFile(root: SessionRoot, filePath: string): boolean {
   const fileName = path.basename(filePath).toLowerCase();
   if (root.provider === "gemini") {
     return path.basename(path.dirname(filePath)).toLowerCase() === "chats" && fileName.startsWith("session-") && /\.jsonl?$/.test(fileName);
+  }
+  if (root.provider === "antigravity") {
+    if (fileName === "transcript_full.jsonl") return true;
+    if (fileName !== "transcript.jsonl") return false;
+    return !fs.existsSync(path.join(path.dirname(filePath), "transcript_full.jsonl"));
   }
   return fileName.endsWith(".jsonl");
 }

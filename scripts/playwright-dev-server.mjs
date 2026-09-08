@@ -9,6 +9,7 @@ const env = {
   AGENT_SESSION_BROWSER_CLAUDE_HOME: path.join(root, "tests", "fixtures", "claude-home"),
   AGENT_SESSION_BROWSER_GEMINI_HOME: path.join(root, "tests", "fixtures", "gemini-home"),
   AGENT_SESSION_BROWSER_PI_HOME: path.join(root, "tests", "fixtures", "pi-home"),
+  AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME: path.join(root, "tests", "fixtures", "antigravity-home"),
   AGENT_SESSION_BROWSER_DATA_DIR: path.join(root, "tests", ".tmp", "playwright-data"),
   AGENT_SESSION_BROWSER_PORT: process.env.AGENT_SESSION_BROWSER_PORT || "4174"
 };

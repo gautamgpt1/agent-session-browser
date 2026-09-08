@@ -19,6 +19,7 @@
   --search-highlight-ink: #3b2a00;
   --orange: #e76536;
   --green: #238452;
+  --cyan: #0b7895;
   --danger: #b7422b;
   --topbar-height: 52px;
   --sidebar-width: 310px;
@@ -43,6 +44,7 @@
   --search-highlight-ink: #171717;
   --orange: #ff8a5b;
   --green: #66bc83;
+  --cyan: #67c7dc;
   --danger: #ff8b70;
 }
 
@@ -372,6 +374,7 @@ a:focus-visible {
 .provider-text.provider-claude { color: var(--orange); }
 .provider-text.provider-gemini { color: var(--green); }
 .provider-text.provider-pi { color: #a060c2; }
+.provider-text.provider-antigravity { color: var(--cyan); }
 
 .session-card-content { min-width: 0; display: grid; gap: 3px; }
 .session-card-content strong {

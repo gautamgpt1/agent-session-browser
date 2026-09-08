@@ -2,7 +2,7 @@
 
 A local-first web interface, terminal UI, and CLI for browsing, reading, filtering, exporting, and resuming coding-agent sessions.
 
-Agent Session Browser turns the history already stored by **Codex CLI**, **Claude Code**, **Gemini CLI**, and **Pi** into readable conversations without modifying the original session files.
+Agent Session Browser turns the history already stored by **Codex CLI**, **Claude Code**, **Gemini CLI**, **Pi**, and **Antigravity** into readable conversations without modifying the original session files.
 
 ## See it in action
 
@@ -26,13 +26,13 @@ That makes three everyday tasks harder than they should be:
 2. **Finding the relevant session.** You may remember the project or opening prompt, but not which agent or session contained the work.
 3. **Choosing the right session to resume.** Titles and first prompts are often too similar. Seeing the actual transcript makes it much easier to resume the correct session from the terminal.
 
-Agent Session Browser provides one local place to browse histories from all four agents, narrow sessions by project and date, inspect their contents in a human-readable form, and resume the right session with its native provider CLI.
+Agent Session Browser provides one local place to browse histories across all supported agents, narrow sessions by project and date, inspect their contents in a human-readable form, and resume the right session with its native provider CLI.
 
 ## Features
 
 ### Find the right session
 
-- Browse Codex CLI, Claude Code, Gemini CLI, and Pi sessions together or one provider at a time.
+- Browse Codex CLI, Claude Code, Gemini CLI, Pi, and Antigravity sessions together or one provider at a time.
 - Find sessions by their first user prompt or session ID.
 - Group sessions by working directory and quickly revisit recent sessions.
 - Filter by provider, working directory, date range, active or archived state, and parse status.
@@ -165,7 +165,7 @@ It places the session list and selected conversation side by side. You can brows
 | `Up` / `Down` | Move through sessions or scroll the focused transcript one wrapped line |
 | `Page Up` / `Page Down` | Jump one visible page in the focused pane |
 | Type / `Backspace` | Search the focused session list or transcript |
-| `Tab` | Cycle through all providers, Codex, Claude Code, Gemini CLI, and Pi |
+| `Tab` | Cycle through all providers, Codex, Claude Code, Gemini CLI, Pi, and Antigravity |
 | `Ctrl+L` | Cycle between split, session-only, and transcript-only views |
 | `Ctrl+O` | Expand the current shortened message when the inline hint is visible |
 | `Ctrl+R` | Show the provider-native resume command |
@@ -182,6 +182,7 @@ When resuming, the TUI launches the installed provider CLI in the working direct
 | Claude Code | `~/.claude/projects` | `claude --resume <id>` |
 | Gemini CLI | `~/.gemini/tmp/<project>/chats` | `gemini --resume <id>` |
 | Pi | `~/.pi/agent/sessions` | `pi --session <id>` |
+| Antigravity | `~/.gemini/antigravity-cli/brain` and `~/.gemini/antigravity/brain` | `agy --conversation <id>` |
 
 Provider-specific coverage includes:
 
@@ -189,6 +190,7 @@ Provider-specific coverage includes:
 - **Claude Code:** project sessions and distinct subagent transcripts, including tools, results, context, metadata, and provider events.
 - **Gemini CLI:** project-path recovery, current chat histories, and supported legacy session structures.
 - **Pi:** session branches, compactions, summaries, model changes, usage, tool calls, and tool results.
+- **Antigravity:** CLI and IDE transcripts, prompt normalization, thinking and planning, linked tool calls and outputs, and conversation resume. Full transcripts are preferred when Antigravity stores both full and shortened variants.
 
 Provider history formats change over time. Recognized content is normalized for readable display, while unknown records remain available as provider events and raw JSON rather than being silently dropped.
 
@@ -217,7 +219,7 @@ When running from source, replace `asb` with `npm run tui -- --`.
 
 ```text
 -q, --query <text>       Find sessions by first prompt or ID
---provider <provider>    Restrict results to codex, claude, gemini, or pi
+--provider <provider>    Restrict results to codex, claude, gemini, pi, or antigravity
 --session <id-or-path>   Resolve one session by ID or cataloged source path
 --print-resume           Print the native resume command
 --export <md|html>       Export without opening the interactive TUI
@@ -272,6 +274,7 @@ Standard history locations are detected automatically. Use environment variables
 | `AGENT_SESSION_BROWSER_CLAUDE_HOME` | Claude home containing `projects` |
 | `AGENT_SESSION_BROWSER_GEMINI_HOME` | Gemini home containing `tmp` |
 | `AGENT_SESSION_BROWSER_PI_HOME` | Pi home containing `agent/sessions` |
+| `AGENT_SESSION_BROWSER_ANTIGRAVITY_HOME` | Antigravity home containing `brain` |
 | `AGENT_SESSION_BROWSER_DATA_DIR` | Local SQLite catalog and CLI export directory |
 | `AGENT_SESSION_BROWSER_PORT` | Local web port; defaults to `4173` |
 | `AGENT_SESSION_BROWSER_DISABLE_WATCHER=1` | Disable automatic watching of supported history folders |
