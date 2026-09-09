@@ -1,6 +1,6 @@
 {
   "name": "agent-session-browser",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Browse, find, filter, export, and resume local coding-agent sessions.",
   "license": "MIT",
   "author": {

@@ -6,7 +6,7 @@ import type { AgentProvider, ConversationItem, ExportMode, SessionDetailResponse
 import { resolveAppConfig } from "../server/config.js";
 import { ViewerDatabase } from "../server/database.js";
 import { SessionIndexer } from "../server/indexer.js";
-import { conversationItems, exportFileName, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../server/session-actions.js";
+import { conversationItems, exportFileName, resolveReplacementDirectory, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../server/session-actions.js";
 import { SessionSourceReader } from "../server/source-reader.js";
 import { expandedMessageText } from "../client/record-display.js";
 import { availableTuiBodyRows, sanitizeTuiText, tuiFrameLayout, tuiPageStep, tuiWidthLayout, visibleTuiView, wrapTuiSegments, wrapTuiSourceText, wrapTuiText, type TuiView } from "./layout.js";
@@ -78,6 +78,7 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
   let debounce: NodeJS.Timeout | null = null;
   let generation = 0;
   let visibleBodyRows = 1;
+  let replacementDirectory: { recorded: string | null; input: string } | null = null;
   const providers: Array<AgentProvider | ""> = ["", "codex", "claude", "gemini", "pi", "antigravity"];
   let initialSessionId = options.resolve ? database.resolveSession(options.resolve).session?.id || null : null;
 
@@ -92,8 +93,8 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
     const width = widthLayout.width;
     const layout = tuiFrameLayout(process.stdout.rows);
     const visibleView = visibleTuiView(view, widthLayout.twoPane, activePane);
-    const activeQuery = activePane === "sessions" ? sessionQuery : transcriptQuery;
-    const settingsText = [
+    const activeQuery = replacementDirectory?.input ?? (activePane === "sessions" ? sessionQuery : transcriptQuery);
+    const settingsText = replacementDirectory ? "" : [
       ["provider", provider || "all"],
       ["sessions", String(sessions.length)],
       ["view", visibleView === "sessions" ? "session" : visibleView]
@@ -101,14 +102,26 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
     const settingsWidth = Math.min(stripAnsi(settingsText).length, Math.max(0, width - 4));
     const topGap = settingsWidth ? Math.min(2, Math.max(0, width - settingsWidth - 1)) : 0;
     const searchWidth = Math.max(1, width - settingsWidth - topGap);
-    const search = `${colors.gray}>${colors.reset} ${activeQuery || `${colors.dim}${activePane === "sessions" ? "find by first prompt or session ID" : "search this transcript"}${colors.reset}`}`;
+    const placeholder = replacementDirectory
+      ? "type or paste an existing directory"
+      : activePane === "sessions" ? "find by first prompt or session ID" : "search this transcript";
+    const searchLabel = replacementDirectory
+      ? `${colors.bold}${colors.white}replacement directory${colors.reset} ${colors.gray}>${colors.reset}`
+      : `${colors.gray}>${colors.reset}`;
+    const search = `${searchLabel} ${activeQuery || `${colors.dim}${placeholder}${colors.reset}`}`;
     const topBar = `${padAnsi(search, searchWidth)}${" ".repeat(topGap)}${truncateAnsi(settingsText, settingsWidth)}`;
     const topDivider = `${colors.white}${"─".repeat(width)}${colors.reset}`;
-    const shortcutEntries = [
+    const shortcutEntries = (replacementDirectory ? [
+      ["enter", "resume here"], ["backspace", "edit"], ["esc", "cancel"], ["ctrl+c", "quit"]
+    ] : [
       ["←/→", "focus"], ["↑/↓", "scroll"], ["pgup/pgdn", "jump page"],
       ["tab", "provider"], ["ctrl+l", "view"], ["enter", "resume"], ["esc", "quit"]
-    ].map(([key, action]) => `${colors.bold}${colors.white}${key}${colors.reset} ${colors.gray}${action}${colors.reset}`);
-    const status = busy ? `${colors.amber}${sanitizeTuiText(busy)}${colors.reset}` : notice ? `${colors.amber}${sanitizeTuiText(notice)}${colors.reset}` : "";
+    ]).map(([key, action]) => `${colors.bold}${colors.white}${key}${colors.reset} ${colors.gray}${action}${colors.reset}`);
+    const replacementStatus = replacementDirectory
+      ? `Recorded directory unavailable: ${replacementDirectory.recorded || "not recorded"}\nChoose an existing replacement directory for this resume only.`
+      : "";
+    const statusText = busy || notice || replacementStatus;
+    const status = statusText ? `${colors.amber}${sanitizeTuiText(statusText)}${colors.reset}` : "";
     const shortcutLines = layout.showShortcuts ? wrapTuiSegments(shortcutEntries, width) : [];
     const shortcutDivider = shortcutLines.length ? `${colors.white}${"─".repeat(width)}${colors.reset}` : "";
     const statusLines = layout.showStatus && stripAnsi(status) ? wrapTuiText(status, width) : [];
@@ -202,8 +215,48 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
       process.stdout.removeListener("resize", render);
       resolve();
     };
+    const launchSelectedSession = (cwd: string): boolean => {
+      if (!detail) return false;
+      let invocation: ReturnType<typeof resumeLaunchInvocation>;
+      try {
+        const providerInvocation = resumeInvocation(detail.session.provider, detail.session.nativeId);
+        if (process.platform === "win32" && spawnSync("where.exe", [providerInvocation.command], { stdio: "ignore", windowsHide: true }).status !== 0) {
+          notice = `Cannot resume: ${providerLabel(detail.session.provider)} command "${providerInvocation.command}" is not available on PATH.`;
+          render();
+          return false;
+        }
+        invocation = resumeLaunchInvocation(detail.session.provider, detail.session.nativeId);
+      } catch (error) {
+        notice = (error as Error).message;
+        render();
+        return false;
+      }
+      close();
+      const child = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: "inherit" });
+      child.on("error", (error) => process.stderr.write(`Unable to resume session: ${error.message}\n`));
+      return true;
+    };
     process.stdout.on("resize", render);
     process.stdin.on("keypress", (value, key: readline.Key) => {
+      if (replacementDirectory) {
+        notice = "";
+        if (key.ctrl && key.name === "c") return close();
+        if (key.name === "escape") {
+          replacementDirectory = null;
+          render();
+          return;
+        }
+        if (key.name === "backspace") replacementDirectory.input = replacementDirectory.input.slice(0, -1);
+        else if (key.name === "return") {
+          const directory = resolveReplacementDirectory(replacementDirectory.input);
+          if (directory.error || !directory.cwd) notice = directory.error || "Enter an existing replacement directory.";
+          else if (launchSelectedSession(directory.cwd)) return;
+        } else if (!key.ctrl && !key.meta && value && value >= " " && value !== "\x7f") {
+          replacementDirectory.input += value;
+        }
+        render();
+        return;
+      }
       notice = "";
       if ((key.ctrl && key.name === "c") || key.name === "escape") return close();
       if (key.name === "left") { activePane = "sessions"; if (view !== "both") view = "sessions"; }
@@ -247,24 +300,12 @@ async function runInteractive(database: ViewerDatabase, reader: SessionSourceRea
         try { notice = resumeCommand(detail.session.provider, detail.session.nativeId); } catch (error) { notice = (error as Error).message; }
       } else if (key.name === "return" && detail) {
         const directory = resolveResumeDirectory(detail.session.cwd);
-        if (directory.error || !directory.cwd) { notice = directory.error || "Cannot resume without an original working directory."; render(); return; }
-        let invocation: ReturnType<typeof resumeLaunchInvocation>;
-        try {
-          const providerInvocation = resumeInvocation(detail.session.provider, detail.session.nativeId);
-          if (process.platform === "win32" && spawnSync("where.exe", [providerInvocation.command], { stdio: "ignore", windowsHide: true }).status !== 0) {
-            notice = `Cannot resume: ${providerLabel(detail.session.provider)} command "${providerInvocation.command}" is not available on PATH.`;
-            render();
-            return;
-          }
-          invocation = resumeLaunchInvocation(detail.session.provider, detail.session.nativeId);
-        } catch (error) {
-          notice = (error as Error).message;
+        if (directory.error || !directory.cwd) {
+          replacementDirectory = { recorded: detail.session.cwd, input: "" };
           render();
           return;
         }
-        close();
-        const child = spawn(invocation.command, invocation.args, { cwd: directory.cwd, shell: false, stdio: "inherit" });
-        child.on("error", (error) => process.stderr.write(`Unable to resume session: ${error.message}\n`));
+        launchSelectedSession(directory.cwd);
         return;
       } else if (!key.ctrl && !key.meta && value && value >= " " && value !== "\x7f" && activePane === "sessions") {
         sessionQuery += value;

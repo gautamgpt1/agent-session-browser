@@ -14,7 +14,7 @@ import { parsePiSessionFile } from "../src/server/pi-parser.js";
 import { parseAntigravitySessionFile } from "../src/server/antigravity-parser.js";
 import { catalogSessionFile } from "../src/server/catalog.js";
 import { expandedMessageText, expandedRecordSections } from "../src/client/record-display.js";
-import { exportSession, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../src/server/session-actions.js";
+import { exportSession, resolveReplacementDirectory, resolveResumeDirectory, resumeCommand, resumeInvocation, resumeLaunchInvocation } from "../src/server/session-actions.js";
 import { LARGE_SOURCE_BYTES, SessionSourceReader } from "../src/server/source-reader.js";
 import { buildSourceLineIndex, readSourceLineAt } from "../src/server/source-lines.js";
 import { getTranscriptCategory, isTranscriptToolItem } from "../src/shared/transcript.js";
@@ -370,6 +370,15 @@ describe("Codex JSONL parser and indexer", () => {
     expect(resolveResumeDirectory(null)).toEqual({
       cwd: null,
       error: "Cannot resume: this session has no recorded working directory."
+    });
+    expect(resolveReplacementDirectory("", existing)).toEqual({
+      cwd: null,
+      error: "Enter an existing replacement directory."
+    });
+    expect(resolveReplacementDirectory('"."', existing)).toEqual({ cwd: existing, error: null });
+    expect(resolveReplacementDirectory(missing, existing)).toEqual({
+      cwd: null,
+      error: `The replacement directory does not exist.\n${missing}`
     });
   });
 });

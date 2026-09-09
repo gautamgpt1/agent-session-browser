@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { AgentProvider, ConversationItem, ExportMode, SessionDetailResponse, SessionSummary } from "../shared/types.js";
 
 export function resumeCommand(provider: AgentProvider, nativeId: string): string {
@@ -36,6 +37,26 @@ export function resolveResumeDirectory(recordedCwd: string | null | undefined): 
     return { cwd: null, error: `Cannot resume: the original working directory is not a directory.\n${recordedCwd}` };
   } catch {
     return { cwd: null, error: `Cannot resume: the original working directory no longer exists.\n${recordedCwd}` };
+  }
+}
+
+export function resolveReplacementDirectory(
+  input: string,
+  baseDirectory = process.cwd()
+): { cwd: string | null; error: string | null } {
+  const trimmed = input.trim();
+  const unquoted = trimmed.length >= 2 && (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) ? trimmed.slice(1, -1).trim() : trimmed;
+  if (!unquoted) return { cwd: null, error: "Enter an existing replacement directory." };
+
+  const candidate = path.resolve(baseDirectory, unquoted);
+  try {
+    if (fs.statSync(candidate).isDirectory()) return { cwd: candidate, error: null };
+    return { cwd: null, error: `The replacement path is not a directory.\n${candidate}` };
+  } catch {
+    return { cwd: null, error: `The replacement directory does not exist.\n${candidate}` };
   }
 }
 

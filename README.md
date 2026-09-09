@@ -99,6 +99,8 @@ npx agent-session-browser web
 npm install --global agent-session-browser
 ```
 
+The `--global` flag is required to create the system-wide `asb` command. Running `npm install agent-session-browser` without it installs the package only in the current project; use `npx agent-session-browser` instead for a one-off run.
+
 The bare command opens the TUI. Add `web` for the browser interface:
 
 ```sh
@@ -169,10 +171,10 @@ It places the session list and selected conversation side by side. You can brows
 | `Ctrl+L` | Cycle between split, session-only, and transcript-only views |
 | `Ctrl+O` | Expand the current shortened message when the inline hint is visible |
 | `Ctrl+R` | Show the provider-native resume command |
-| `Enter` | Resume the selected session with its provider CLI |
+| `Enter` | Resume the selected session with its provider CLI; if its recorded directory is unavailable, enter a replacement |
 | `Esc` / `Ctrl+C` | Exit |
 
-When resuming, the TUI launches the installed provider CLI in the working directory recorded by the session. If that directory no longer exists, it leaves the session untouched and explains why it cannot resume it directly.
+When resuming, the TUI launches the installed provider CLI in the working directory recorded by the session. If that directory was deleted, renamed, or never recorded, the TUI shows the unavailable path and asks for an existing replacement directory. Type or paste the path and press `Enter`, or press `Esc` to cancel. The replacement applies only to that launch: Agent Session Browser does not rewrite the session metadata or silently fall back to the directory where `asb` was started.
 
 ## Supported agents
 
