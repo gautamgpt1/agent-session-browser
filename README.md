@@ -79,29 +79,13 @@ Agent Session Browser provides one local place to browse histories across all su
 
 The matching provider CLI is required only when resuming a session. Browsing, reading, filtering, and exporting existing history do not require provider authentication.
 
-### Run without installing
-
-Open the terminal interface from any directory:
+### Install
 
 ```sh
-npx agent-session-browser
+npm install -g agent-session-browser
 ```
 
-Start the web interface and open it in your default browser:
-
-```sh
-npx agent-session-browser web
-```
-
-### Install the short command
-
-```sh
-npm install --global agent-session-browser
-```
-
-The `--global` flag is required to create the system-wide `asb` command. Running `npm install agent-session-browser` without it installs the package only in the current project; use `npx agent-session-browser` instead for a one-off run.
-
-The bare command opens the TUI. Add `web` for the browser interface:
+Install globally once, then use the short command from any directory. The bare command opens the TUI; add `web` for the browser interface:
 
 ```sh
 asb
@@ -109,6 +93,17 @@ asb web
 ```
 
 Use `asb web --no-open` to print the local URL without opening a browser, or `asb web --port 4180` to choose another port.
+
+The `-g` flag is required to make `asb` available system-wide. A project-local `npm install agent-session-browser` does not create a terminal command you can use everywhere.
+
+### Run once without installing
+
+Use `npx` when you want to run Agent Session Browser without installing the permanent `asb` command:
+
+```sh
+npx agent-session-browser
+npx agent-session-browser web
+```
 
 ### Run from source
 
