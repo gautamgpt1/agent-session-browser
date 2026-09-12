@@ -4,6 +4,13 @@ A local-first web interface, terminal UI, and CLI for browsing, reading, filteri
 
 Agent Session Browser turns the history already stored by **Codex CLI**, **Claude Code**, **Gemini CLI**, **Pi**, and **Antigravity** into readable conversations without modifying the original session files.
 
+[![npm version](https://img.shields.io/npm/v/agent-session-browser.svg?style=flat-square)](https://www.npmjs.com/package/agent-session-browser)
+[![npm downloads](https://img.shields.io/npm/dm/agent-session-browser.svg?style=flat-square)](https://www.npmjs.com/package/agent-session-browser)
+[![CI](https://img.shields.io/github/actions/workflow/status/gautamgpt1/agent-session-browser/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/gautamgpt1/agent-session-browser/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/node/v/agent-session-browser.svg?style=flat-square)](https://www.npmjs.com/package/agent-session-browser)
+[![License: MIT](https://img.shields.io/npm/l/agent-session-browser.svg?style=flat-square)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/gautamgpt1/agent-session-browser.svg?style=flat-square)](https://github.com/gautamgpt1/agent-session-browser/stargazers)
+
 ## See it in action
 
 ### Web interface
